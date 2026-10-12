@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2F80C9">
+<title>現地集合フライト｜イーグル隊長の空中散歩</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦅</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=M+PLUS+Rounded+1c:wght@400;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============ 認証 ============ -->
+<section id="authView" class="view auth-view">
+  <button type="button" class="btn btn-ghost-light auth-settings" data-open-settings>設定</button>
+  <div class="auth-hero">
+    <div class="hero-eagle" aria-hidden="true">🦅</div>
+    <h1 class="hero-title">現地集合<br>フライト</h1>
+    <p class="hero-sub">イーグル隊長の足につかまって、みんなが待つ場所へ。<br>着いたら肉を焼いて、歌って、踊ろう。</p>
+  </div>
+
+  <div class="auth-card">
+    <div class="auth-tabs" role="tablist">
+      <button class="auth-tab is-active" data-tab="login" role="tab">ログイン</button>
+      <button class="auth-tab" data-tab="register" role="tab">新規登録</button>
+      <button class="auth-tab" data-tab="reset" role="tab">パスワードを忘れた</button>
+    </div>
+
+    <form id="loginForm" class="auth-form" data-form="login" autocomplete="on">
+      <label>メールアドレス<input name="email" type="email" required autocomplete="email"></label>
+      <label>パスワード
+        <span class="pw-wrap"><input name="password" type="password" required autocomplete="current-password">
+          <button type="button" class="pw-toggle" aria-label="パスワードを表示"></button></span>
+      </label>
+      <label class="check"><input name="remember" type="checkbox" checked> この端末でログイン状態を保つ</label>
+      <button class="btn btn-primary" type="submit">ログイン</button>
+    </form>
+
+    <form id="registerForm" class="auth-form" data-form="register" hidden>
+      <label>メールアドレス<input name="email" type="email" required autocomplete="email"></label>
+      <label>ニックネーム<input name="nickname" type="text" required maxlength="20" placeholder="広場で表示される名前"></label>
+      <p class="note">仮パスワードをメールでお送りします。初回ログイン時に新しいパスワードを設定してください。</p>
+      <button class="btn btn-primary" type="submit">仮パスワードを受け取る</button>
+    </form>
+
+    <form id="resetForm" class="auth-form" data-form="reset" hidden>
+      <label>登録したメールアドレス<input name="email" type="email" required autocomplete="email"></label>
+      <p class="note">新しい仮パスワードをメールでお送りします。</p>
+      <button class="btn btn-primary" type="submit">仮パスワードを再発行</button>
+    </form>
+
+    <div id="authMsg" class="auth-msg" role="status" hidden></div>
+  </div>
+</section>
+
+<!-- ============ メイン（地図） ============ -->
+<section id="appView" class="view app-view" hidden>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">🦅</span><span class="brand-name">現地集合フライト</span></div>
+    <div class="topbar-actions">
+      <button id="btnAdmin" class="btn btn-ghost" hidden>スポット管理</button>
+      <button class="btn btn-ghost" data-open-settings>設定</button>
+      <button id="btnProfile" class="user-chip"><span id="userAvatar">🙂</span><span id="userName"></span></button>
+      <button id="btnLogout" class="btn btn-ghost">ログアウト</button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <div class="map-wrap">
+      <div id="map" aria-label="スポットの地図"></div>
+      <div id="captainDock" class="captain-dock" hidden>
+        <span class="captain-face" aria-hidden="true">🦅</span>
+        <p id="captainText"></p>
+      </div>
+    </div>
+
+    <aside class="panel">
+      <nav class="panel-tabs" role="tablist">
+        <button class="panel-tab is-active" data-tab="pick">地図から選ぶ</button>
+        <button class="panel-tab" data-tab="dart">風まかせ</button>
+        <button class="panel-tab" data-tab="mood">今日の気分</button>
+        <button class="panel-tab" data-tab="mystery">ミステリー</button>
+      </nav>
+
+      <div class="tab-body" data-body="pick">
+        <div class="filter-row">
+          <input id="spotSearch" type="search" placeholder="スポット名で探す">
+          <select id="catFilter"><option value="">すべて</option></select>
+        </div>
+        <ul id="spotList" class="spot-list"></ul>
+      </div>
+
+      <div class="tab-body" data-body="dart" hidden>
+        <h2 class="tab-title">イーグル隊長におまかせ！</h2>
+        <p>隊長の羽を地図めがけて投げます。刺さった場所が今日の行き先です。</p>
+        <button id="btnDart" class="btn btn-primary btn-big">羽を投げる</button>
+      </div>
+
+      <div class="tab-body" data-body="mood" hidden>
+        <h2 class="tab-title">今日はどんな気分？</h2>
+        <div id="moodChips" class="chips"></div>
+        <textarea id="moodText" rows="3" maxlength="200" placeholder="例：今夜は肉を焼いて騒ぎたい"></textarea>
+        <button id="btnMood" class="btn btn-primary">隊長に相談する</button>
+        <div id="moodResult" class="mood-result" hidden></div>
+      </div>
+
+      <div class="tab-body" data-body="mystery" hidden>
+        <h2 class="tab-title">ミステリーフライト</h2>
+        <p>行き先は着陸するまで秘密。飛行中の隊長のヒントを聞いて、どこへ向かっているか当ててください。</p>
+        <button id="btnMystery" class="btn btn-primary btn-big">行き先を伏せて出発</button>
+      </div>
+
+      <div id="spotCard" class="spot-card" hidden></div>
+    </aside>
+  </main>
+
+  <div id="dart" class="dart" hidden aria-hidden="true">
+    <svg viewBox="0 0 36 120" width="36" height="120">
+      <path d="M18 0 L22 16 L18 118 L14 16 Z" fill="#5a3a1e"/>
+      <path d="M18 14 C34 30 34 70 20 104 L18 104 Z" fill="#8a5a30"/>
+      <path d="M18 14 C2 30 2 70 16 104 L18 104 Z" fill="#a8743f"/>
+      <path d="M18 30 L30 40 M18 46 L31 56 M18 62 L29 72 M18 30 L6 40 M18 46 L5 56 M18 62 L7 72" stroke="#f6e3c3" stroke-width="1.4" opacity=".7"/>
+      <circle cx="18" cy="4" r="3" fill="#F6B24A"/>
+    </svg>
+  </div>
+</section>
+
+<!-- ============ フライト ============ -->
+<section id="flightView" class="flight-view" hidden>
+  <div id="flightMedia" class="flight-media"></div>
+  <div class="flight-top">
+    <span id="flightDest" class="flight-dest"></span>
+    <button id="btnAbort" class="btn btn-ghost-light">引き返す</button>
+  </div>
+  <p id="flightSub" class="flight-sub" aria-live="polite"></p>
+  <div class="flight-bottom">
+    <p id="flightStatus" class="flight-status"></p>
+    <div id="mysteryBox" class="mystery-box" hidden>
+      <p>どこへ向かっていると思う？</p>
+      <div id="guessChoices" class="guess-choices"></div>
+    </div>
+    <div class="flight-buttons">
+      <button id="btnTakeoff" class="btn btn-primary btn-big" hidden>出発！</button>
+      <button id="btnArrive" class="btn btn-amber btn-big" disabled>着陸する</button>
+    </div>
+  </div>
+  <div id="revealBox" class="reveal" hidden></div>
+</section>
+
+<!-- ============ 現地合流広場 ============ -->
+<section id="plazaView" class="view plaza-view" hidden>
+  <header class="plaza-head">
+    <div>
+      <h2 id="plazaName" class="plaza-name"></h2>
+      <p id="plazaCount" class="plaza-count"></p>
+    </div>
+    <div class="plaza-head-actions">
+      <button id="btnStreetView" class="btn btn-ghost" aria-pressed="false" hidden>現地の景色</button>
+      <button id="btnSound" class="btn btn-ghost" aria-pressed="true">音あり</button>
+      <button id="btnBgm" class="btn btn-ghost" aria-pressed="false">BGM</button>
+      <button id="btnLeave" class="btn btn-ghost">地図に戻る</button>
+    </div>
+  </header>
+
+  <div class="plaza-body">
+    <div id="stage" class="stage" title="地面をタップすると移動できます">
+      <div id="stageSv" class="stage-sv" aria-hidden="true"></div>
+      <div id="stageProp" class="stage-prop" aria-hidden="true"></div>
+      <div class="plaza-captain">
+        <span class="plaza-captain-face" aria-hidden="true">🦅</span>
+        <p id="plazaCaptainText" class="plaza-captain-text"></p>
+      </div>
+      <div id="avatars"></div>
+    </div>
+
+    <aside class="plaza-side">
+      <div id="actionBar" class="action-bar"></div>
+      <div id="phraseBar" class="phrase-bar"></div>
+      <ol id="chatLog" class="chat-log" aria-live="polite"></ol>
+      <form id="chatForm" class="chat-form">
+        <input id="chatInput" type="text" maxlength="140" placeholder="メッセージを入力" autocomplete="off">
+        <button class="btn btn-primary" type="submit">送る</button>
+      </form>
+    </aside>
+  </div>
+</section>
+
+<!-- ============ パスワード変更 ============ -->
+<div id="pwModal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pwTitle">
+    <h2 id="pwTitle">新しいパスワードを設定</h2>
+    <p id="pwLead" class="note">安全のため、仮パスワードから新しいパスワードに変更してください。変更するまで他の機能は使えません。</p>
+    <form id="pwForm">
+      <label>現在のパスワード（仮パスワード）
+        <span class="pw-wrap"><input name="current" type="password" required autocomplete="current-password">
+          <button type="button" class="pw-toggle" aria-label="パスワードを表示"></button></span>
+      </label>
+      <label>新しいパスワード（英字と数字を含む8文字以上）
+        <span class="pw-wrap"><input name="next" type="password" required minlength="8" autocomplete="new-password">
+          <button type="button" class="pw-toggle" aria-label="パスワードを表示"></button></span>
+      </label>
+      <label>新しいパスワード（確認）
+        <span class="pw-wrap"><input name="confirm" type="password" required minlength="8" autocomplete="new-password">
+          <button type="button" class="pw-toggle" aria-label="パスワードを表示"></button></span>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-close>閉じる</button>
+        <button type="submit" class="btn btn-primary">パスワードを変更</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ============ プロフィール ============ -->
+<div id="profileModal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="profTitle">
+    <h2 id="profTitle">プロフィール</h2>
+    <form id="profileForm">
+      <label>ニックネーム<input name="nickname" type="text" maxlength="20" required></label>
+      <fieldset class="avatar-pick"><legend>広場でのアバター</legend><div id="avatarChoices"></div></fieldset>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="btnOpenPw">パスワード変更</button>
+        <button type="button" class="btn btn-ghost" data-close>閉じる</button>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ============ 管理（スポット） ============ -->
+<div id="adminModal" class="modal" hidden>
+  <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="adminTitle">
+    <div class="modal-head">
+      <h2 id="adminTitle">スポット管理</h2>
+      <button type="button" class="btn btn-ghost" data-close>閉じる</button>
+    </div>
+    <nav class="admin-tabs">
+      <button class="admin-tab is-active" data-tab="import">外部から取り込む</button>
+      <button class="admin-tab" data-tab="list">登録済みスポット</button>
+      <button class="admin-tab" data-tab="add">1件追加</button>
+    </nav>
+
+    <div class="admin-body" data-body="import">
+      <p class="note">テキスト・CSV・JSON・URL・「日本の絶景BBQスポット5選」のような依頼文を、Geminiがスポット一覧に整形します。</p>
+      <textarea id="impText" rows="6" placeholder="ここに貼り付け、または依頼文を入力"></textarea>
+      <div class="filter-row">
+        <input id="impUrl" type="url" placeholder="URLから取り込む場合（任意）">
+        <label class="file-btn">CSV/JSONを読む<input id="impFile" type="file" accept=".csv,.json,.txt,text/*" hidden></label>
+      </div>
+      <button id="btnImpPreview" class="btn btn-primary">整形してプレビュー</button>
+      <div id="impPreview" hidden>
+        <div class="table-scroll"><table class="tbl"><thead><tr><th></th><th>名前</th><th>カテゴリ</th><th>緯度</th><th>経度</th><th>紹介</th><th>動画</th></tr></thead><tbody id="impRows"></tbody></table></div>
+        <div class="filter-row">
+          <input id="impSource" type="text" maxlength="40" placeholder="取り込み名（一括削除に使います）">
+          <button id="btnImpCommit" class="btn btn-amber">チェックしたスポットを登録</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="admin-body" data-body="list" hidden>
+      <div class="filter-row">
+        <select id="srcSelect"><option value="">取り込み名を選ぶ</option></select>
+        <button id="btnDelSource" class="btn btn-danger">この取り込み分を一括削除</button>
+      </div>
+      <div class="table-scroll"><table class="tbl"><thead><tr><th>名前</th><th>カテゴリ</th><th>フライト動画（DriveのURL/ID）</th><th>背景画像</th><th></th></tr></thead><tbody id="adminRows"></tbody></table></div>
+    </div>
+
+    <div class="admin-body" data-body="add" hidden>
+      <form id="addSpotForm" class="grid-form">
+        <label>名前<input name="name" required></label>
+        <label>カテゴリ<select name="category"></select></label>
+        <label>緯度<input name="lat" type="number" step="any" required></label>
+        <label>経度<input name="lng" type="number" step="any" required></label>
+        <label class="span2">紹介文<input name="description" maxlength="200"></label>
+        <label class="span2">アクティビティ（カンマ区切り：bbq,sing,dance など）<input name="activity_tags"></label>
+        <label class="span2">フライト動画（GoogleドライブのURLまたはファイルID）<input name="flight_video_url"></label>
+        <label class="span2">背景画像（GoogleドライブのURL/ID または画像URL）<input name="image_url"></label>
+        <button class="btn btn-primary span2" type="submit">スポットを追加</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 設定・バージョン情報 ============ -->
+<div id="settingsModal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-head">
+      <h2 id="settingsTitle">設定</h2>
+      <button type="button" class="btn btn-ghost" data-close>閉じる</button>
+    </div>
+    <nav class="admin-tabs">
+      <button class="settings-tab admin-tab is-active" data-tab="gas">接続先（GAS）</button>
+      <button class="settings-tab admin-tab" data-tab="version">バージョン情報</button>
+    </nav>
+
+    <div class="settings-body" data-body="gas">
+      <form id="gasForm" class="settings-form">
+        <p class="note">config.js の値：<br><code id="gasDefault" class="url-code"></code></p>
+        <div id="gasOverrideBox">
+          <label>GAS ウェブアプリの URL
+            <input id="gasUrlInput" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
+          </label>
+          <p class="note">ここで保存した URL はこの端末だけで使われ、config.js より優先されます。</p>
+          <p id="gasTestMsg" class="gas-test-msg" role="status"></p>
+          <div class="modal-actions">
+            <button type="button" id="btnGasReset" class="btn btn-ghost">config.js の値に戻す</button>
+            <button type="button" id="btnGasTest" class="btn btn-ghost">接続テスト</button>
+            <button type="submit" class="btn btn-primary">保存</button>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <div class="settings-body" data-body="version" hidden>
+      <div id="versionInfo"></div>
+    </div>
+  </div>
+</div>
+
+<div id="loading" class="loading" hidden><div class="loading-eagle" aria-hidden="true">🦅</div><p id="loadingText">読み込み中…</p></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<button type="button" id="versionBar" class="version-bar"></button>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
