@@ -7,7 +7,7 @@
 window.APP_CONFIG = {
   APP_NAME: '現地集合フライト',
   SUBTITLE: 'イーグル隊長の空中散歩',
-  VERSION: 'v1.2.0',
+  VERSION: 'v1.3.0',
   BUILD: '20261013',
   STATUS: 'β版',
 
@@ -19,6 +19,7 @@ window.APP_CONFIG = {
 
   // 更新履歴（設定画面のバージョン情報に表示）
   CHANGELOG: [
+    { version: 'v1.3.0', date: '2026-10-13', note: 'Googleマップの共有リンク（maps.app.goo.gl など）を貼るだけで行き先を登録できるように。一括取り込みにも対応' },
     { version: 'v1.2.0', date: '2026-10-13', note: 'Google Maps APIキーをスクリプトプロパティ管理に。スポットの「上空から見る／現地の景色」、広場の背景にストリートビューを追加' },
     { version: 'v1.1.0', date: '2026-10-13', note: '設定画面（GAS URLの設定・接続テスト）とバージョン情報画面を追加' },
     { version: 'v1.0.0', date: '2026-10-13', note: '初版公開（会員認証・行き先選定・フライト・現地広場・スポット管理）' }

@@ -241,11 +241,11 @@
     <nav class="admin-tabs">
       <button class="admin-tab is-active" data-tab="import">外部から取り込む</button>
       <button class="admin-tab" data-tab="list">登録済みスポット</button>
-      <button class="admin-tab" data-tab="add">1件追加</button>
+      <button class="admin-tab" data-tab="add">Googleマップから追加</button>
     </nav>
 
     <div class="admin-body" data-body="import">
-      <p class="note">テキスト・CSV・JSON・URL・「日本の絶景BBQスポット5選」のような依頼文を、Geminiがスポット一覧に整形します。</p>
+      <p class="note">テキスト・CSV・JSON・URL・「日本の絶景BBQスポット5選」のような依頼文を、Geminiがスポット一覧に整形します。Googleマップの共有リンクを1行に1つずつ貼れば、まとめて登録もできます。</p>
       <textarea id="impText" rows="6" placeholder="ここに貼り付け、または依頼文を入力"></textarea>
       <div class="filter-row">
         <input id="impUrl" type="url" placeholder="URLから取り込む場合（任意）">
@@ -270,7 +270,19 @@
     </div>
 
     <div class="admin-body" data-body="add" hidden>
+      <div class="maps-link-box">
+        <label for="mapsLinkInput">Googleマップのリンク</label>
+        <p class="note">マップで場所を開き「共有」→「リンクをコピー」したものを貼り付けます。名前・位置・紹介文が自動で入ります。</p>
+        <div class="filter-row">
+          <input id="mapsLinkInput" type="text" inputmode="url" placeholder="https://maps.app.goo.gl/…" autocomplete="off">
+          <button type="button" id="btnMapsPaste" class="btn btn-ghost">貼り付け</button>
+        </div>
+        <button type="button" id="btnMapsResolve" class="btn btn-amber">リンクから読み取る</button>
+        <div id="mapsResolved" class="maps-resolved" hidden></div>
+      </div>
       <form id="addSpotForm" class="grid-form">
+        <input type="hidden" name="address">
+        <input type="hidden" name="maps_url">
         <label>名前<input name="name" required></label>
         <label>カテゴリ<select name="category"></select></label>
         <label>緯度<input name="lat" type="number" step="any" required></label>
@@ -279,7 +291,7 @@
         <label class="span2">アクティビティ（カンマ区切り：bbq,sing,dance など）<input name="activity_tags"></label>
         <label class="span2">フライト動画（GoogleドライブのURLまたはファイルID）<input name="flight_video_url"></label>
         <label class="span2">背景画像（GoogleドライブのURL/ID または画像URL）<input name="image_url"></label>
-        <button class="btn btn-primary span2" type="submit">スポットを追加</button>
+        <button class="btn btn-primary span2" type="submit">行き先に登録</button>
       </form>
     </div>
   </div>

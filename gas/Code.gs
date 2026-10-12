@@ -5,6 +5,7 @@
  *
  * ■ スクリプトプロパティ（プロジェクトの設定 → スクリプト プロパティ）
  *   GEMINI_API_KEY   : 必須  Gemini APIキー
+ *   ※ Googleマップのリンク解析は組み込みの Maps サービス（キー不要）を使用
  *   GOOGLE_MAPS_API_KEY : 任意  Google Maps APIキー（Maps Embed API。ログイン済み会員にのみ返す）
  *   GEMINI_MODEL     : 任意  既定 gemini-2.5-flash
  *   TTS_MODEL        : 任意  既定 gemini-2.5-flash-preview-tts
@@ -20,13 +21,14 @@
  * ■ コード変更後は「デプロイを管理 → 編集 → 新バージョン」で再デプロイが必要
  ******************************************************************/
 
-const APP = { NAME: '現地集合フライト', VERSION: 'v1.2.0', BUILD: '20261013' };
+const APP = { NAME: '現地集合フライト', VERSION: 'v1.3.0', BUILD: '20261013' };
 
 const SHEET_DEF = {
   Users: ['email', 'nickname', 'salt', 'hash', 'mustChange', 'role', 'status',
           'failCount', 'lockedUntil', 'avatar', 'createdAt', 'lastLogin'],
   Spots: ['spot_id', 'name', 'lat', 'lng', 'description', 'category',
-          'flight_video_url', 'activity_tags', 'image_url', 'source', 'createdAt', 'updatedAt'],
+          'flight_video_url', 'activity_tags', 'image_url', 'source', 'createdAt', 'updatedAt',
+          'address', 'maps_url'],
   ActivityLogs: ['id', 'ts', 'spot_id', 'email', 'nickname', 'type', 'payload'],
   Presence: ['key', 'spot_id', 'email', 'nickname', 'avatar', 'x', 'y', 'lastSeen']
 };
@@ -93,6 +95,7 @@ const ROUTES = {
   deleteSpotsBySource: deleteSpotsBySource_,
   importPreview: importPreview_,
   importCommit: importCommit_,
+  resolveMapUrl: resolveMapUrl_,
   // エンタメ・AI
   recommend: recommend_,
   narration: narration_,
@@ -363,7 +366,9 @@ function spotOut_(r) {
     flight_video_url: String(r.flight_video_url || ''),
     activity_tags: String(r.activity_tags || '').split(',').map(s => s.trim()).filter(Boolean),
     image_url: String(r.image_url || ''),
-    source: String(r.source || '')
+    source: String(r.source || ''),
+    address: String(r.address || ''),
+    maps_url: String(r.maps_url || '')
   };
 }
 
@@ -386,7 +391,8 @@ function upsertSpot_(req) {
       updateObj_('Spots', hit._row, Object.assign({}, s, { updatedAt: now }));
     } else {
       s.spot_id = s.spot_id || newId_('S');
-      appendObj_('Spots', Object.assign({ source: 'manual', createdAt: now, updatedAt: now }, s));
+      const source = String((req.spot && req.spot.source) || 'manual').slice(0, 40);
+      appendObj_('Spots', Object.assign({ source, createdAt: now, updatedAt: now }, s));
     }
     return { spot: getSpot_(s.spot_id), message: '保存しました' };
   });
@@ -427,6 +433,18 @@ function importPreview_(req) {
   }
   if (!src.trim()) fail_('empty', '取り込む内容を入力してください');
 
+  // 貼り付けた中の Googleマップのリンクを先に解析して、正確な座標をAIに渡す
+  const links = extractMapsLinks_(src).slice(0, 20);
+  const resolved = [];
+  links.forEach(u => {
+    try { const r = mapsLinkToPlace_(u); if (r) resolved.push(r); }
+    catch (e) { console.warn('リンク解析失敗: ' + u + ' ' + e); }
+  });
+  if (resolved.length) {
+    src += '\n\n[Googleマップのリンク解析結果（name・lat・lng・address はこの値をそのまま使うこと）]\n' +
+      JSON.stringify(resolved.map(r => ({ name: r.name, lat: r.lat, lng: r.lng, address: r.address })));
+  }
+
   const prompt =
     '次の入力から、仮想フライトの目的地となるスポットを抽出し、JSON配列だけを返してください。\n' +
     '入力が「日本の絶景BBQスポット5選」のような依頼文なら、実在するスポットを指定数（指定がなければ5件）選んで作成してください。\n' +
@@ -443,6 +461,11 @@ function importPreview_(req) {
   const arr = geminiJson_(prompt, 0.4);
   if (!Array.isArray(arr)) fail_('parse_error', 'スポット一覧として読み取れませんでした。入力を見直してください');
   const items = arr.map(sanitizeSpot_).filter(s => s.name && isFinite(s.lat) && isFinite(s.lng)).slice(0, 30);
+  // 解析済みリンクと座標が近いものに、地図URLと住所を付ける
+  items.forEach(s => {
+    const hit = resolved.find(r => Math.abs(r.lat - s.lat) < 0.01 && Math.abs(r.lng - s.lng) < 0.01);
+    if (hit) { s.maps_url = hit.maps_url; s.address = s.address || hit.address; }
+  });
   return { items, count: items.length };
 }
 
@@ -471,6 +494,116 @@ function importCommit_(req) {
   });
 }
 
+/* =================================================================
+ * Googleマップのリンク → 行き先
+ *   https://maps.app.goo.gl/xxxx（共有の短縮リンク）
+ *   https://www.google.com/maps/place/名前/@35.6,139.7,17z/data=!3d..!4d..
+ *   https://maps.google.com/?q=35.6,139.7  など
+ * ================================================================= */
+function resolveMapUrl_(req) {
+  requireAdmin_(req);
+  const text = String(req.text || req.url || '').trim();
+  const url = extractMapsLinks_(text)[0];
+  if (!url) fail_('bad_url', 'Googleマップのリンクが見つかりません。マップの「共有」→「リンクをコピー」で取得したURLを貼り付けてください');
+  // 共有テキストに含まれる店名など（URL以外の行）をヒントに使う
+  const hint = text.replace(url, ' ').split(/\n/).map(s => s.trim()).filter(Boolean)[0] || '';
+  const place = mapsLinkToPlace_(url, hint);
+  if (!place) fail_('not_found', 'リンクから場所を読み取れませんでした。別のリンクか、緯度・経度の手入力をお試しください');
+  const extra = enrichSpot_(place);
+  return { spot: sanitizeSpot_(Object.assign({}, place, extra)) };
+}
+
+function extractMapsLinks_(text) {
+  const re = /https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl\/maps|(?:www\.)?google\.[a-z.]+\/maps|maps\.google\.[a-z.]+)[^\s"'<>）」]*/gi;
+  const found = String(text || '').match(re) || [];
+  return found.filter((u, i) => found.indexOf(u) === i);
+}
+
+/** 短縮リンクを展開し、名前・座標・住所を得る */
+function mapsLinkToPlace_(url, hint) {
+  const longUrl = expandMapsUrl_(url);
+  const p = parseMapsUrl_(longUrl);
+  let name = p.name || hint || '';
+  let lat = p.lat, lng = p.lng, address = '';
+
+  if ((!isFinite(lat) || !isFinite(lng)) && name) {
+    const g = geocode_(name);
+    if (g) { lat = g.lat; lng = g.lng; address = g.address; }
+  }
+  if (!isFinite(lat) || !isFinite(lng)) return null;
+  if (!address) {
+    const rg = reverseGeocode_(lat, lng);
+    if (rg) address = rg.address;
+  }
+  if (!name) name = address || (lat.toFixed(4) + ',' + lng.toFixed(4));
+  return { name: name.slice(0, 60), lat: round6_(lat), lng: round6_(lng), address, maps_url: url };
+}
+
+function expandMapsUrl_(url) {
+  let cur = url;
+  for (let i = 0; i < 6; i++) {
+    if (!/goo\.gl/.test(cur)) return cur;
+    const res = UrlFetchApp.fetch(cur, { followRedirects: false, muteHttpExceptions: true });
+    const h = res.getAllHeaders();
+    const loc = h.Location || h.location;
+    if (loc) { cur = Array.isArray(loc) ? loc[0] : loc; continue; }
+    // リダイレクトせずHTMLで返る場合は本文からマップURLを探す
+    const m = res.getContentText().match(/https:\/\/www\.google\.[a-z.]+\/maps[^"'\s<>]+/);
+    return m ? m[0].replace(/\\u0026/g, '&').replace(/&amp;/g, '&') : cur;
+  }
+  return cur;
+}
+
+function parseMapsUrl_(u) {
+  let s = String(u || '');
+  try { s = decodeURIComponent(s.replace(/\+/g, ' ')); } catch (e) { /* そのまま */ }
+  const out = { name: '', lat: NaN, lng: NaN };
+  let m;
+  if ((m = s.match(/\/maps\/place\/([^/@?]+)/))) out.name = m[1].trim();
+  else if ((m = s.match(/\/maps\/search\/([^/@?]+)/))) out.name = m[1].trim();
+  // 場所そのものの座標（!3d緯度!4d経度）を最優先、次に @中心座標
+  if ((m = s.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/))) { out.lat = +m[1]; out.lng = +m[2]; }
+  else if ((m = s.match(/[?&](?:q|query|ll|center|destination|daddr)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/))) { out.lat = +m[1]; out.lng = +m[2]; }
+  else if ((m = s.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/))) { out.lat = +m[1]; out.lng = +m[2]; }
+  if (!out.name && (m = s.match(/[?&](?:q|query)=([^&]+)/)) && !/^-?\d+(\.\d+)?,/.test(m[1])) out.name = m[1].trim();
+  // 「緯度,経度」だけの名前は名前として使わない
+  if (/^-?\d+(\.\d+)?,\s*-?\d+(\.\d+)?$/.test(out.name)) out.name = '';
+  return out;
+}
+
+/** Apps Script 組み込みの Maps サービス（APIキー不要） */
+function geocode_(q) {
+  try {
+    const r = Maps.newGeocoder().setLanguage('ja').setRegion('jp').geocode(q);
+    const g = r && r.results && r.results[0];
+    return g ? { lat: g.geometry.location.lat, lng: g.geometry.location.lng, address: cleanAddress_(g.formatted_address) } : null;
+  } catch (e) { console.warn('geocode失敗: ' + e); return null; }
+}
+
+function reverseGeocode_(lat, lng) {
+  try {
+    const r = Maps.newGeocoder().setLanguage('ja').reverseGeocode(lat, lng);
+    const g = r && r.results && r.results[0];
+    return g ? { address: cleanAddress_(g.formatted_address) } : null;
+  } catch (e) { console.warn('reverseGeocode失敗: ' + e); return null; }
+}
+
+function cleanAddress_(a) { return String(a || '').replace(/^日本、\s*/, '').replace(/〒\d{3}-\d{4}\s*/, '').trim(); }
+function round6_(v) { return Math.round(Number(v) * 1e6) / 1e6; }
+
+/** 名前と住所から紹介文・カテゴリ・アクティビティをGeminiで補う（失敗しても登録は続行） */
+function enrichSpot_(place) {
+  try {
+    const r = geminiJson_(
+      '次の場所を、仮想フライトの目的地として紹介します。JSONだけで返してください。\n' +
+      '{"description":"80字以内の紹介文","category":"' + CATEGORIES.join('|') + ' のいずれか","activity_tags":["bbq","sing","dance","talk","stargazing","photo","walk","onsen" などから該当するもの]}\n' +
+      '場所：' + place.name + '\n住所：' + (place.address || '不明') + '\n座標：' + place.lat + ',' + place.lng, 0.5) || {};
+    return { description: r.description || '', category: r.category, activity_tags: r.activity_tags || [] };
+  } catch (e) {
+    return { description: '', category: 'その他', activity_tags: [] };
+  }
+}
+
 function sanitizeSpot_(s) {
   const tags = Array.isArray(s.activity_tags) ? s.activity_tags : String(s.activity_tags || '').split(',');
   return {
@@ -482,7 +615,9 @@ function sanitizeSpot_(s) {
     category: CATEGORIES.indexOf(s.category) >= 0 ? s.category : 'その他',
     flight_video_url: String(s.flight_video_url || '').trim(),
     activity_tags: tags.map(t => String(t).trim()).filter(Boolean).slice(0, 10).join(','),
-    image_url: String(s.image_url || '').trim()
+    image_url: String(s.image_url || '').trim(),
+    address: String(s.address || '').trim().slice(0, 120),
+    maps_url: String(s.maps_url || '').trim().slice(0, 500)
   };
 }
 
@@ -792,6 +927,9 @@ function sheet_(name) {
     sh = ss.insertSheet(name);
     sh.getRange(1, 1, 1, SHEET_DEF[name].length).setValues([SHEET_DEF[name]]).setFontWeight('bold');
     sh.setFrozenRows(1);
+  } else if (sh.getLastColumn() < SHEET_DEF[name].length) {
+    // 列を追加した版へ更新したときは見出しを補う
+    sh.getRange(1, 1, 1, SHEET_DEF[name].length).setValues([SHEET_DEF[name]]).setFontWeight('bold');
   }
   return sh;
 }

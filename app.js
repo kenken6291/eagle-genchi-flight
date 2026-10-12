@@ -482,6 +482,8 @@
       <div class="meta">${esc(sp.category)}</div>
       <p>${esc(sp.description || '説明はまだありません')}</p>
       <div class="tags">${sp.activity_tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+      ${sp.address ? `<div class="meta">📍 ${esc(sp.address)}</div>` : ''}
+      ${sp.maps_url ? `<a class="maps-open" href="${esc(sp.maps_url)}" target="_blank" rel="noopener">Googleマップで開く</a>` : ''}
       ${S.mapsKey ? `<div class="filter-row">
         <button type="button" class="btn btn-ghost btn-sm" data-peek="view">上空から見る</button>
         <button type="button" class="btn btn-ghost btn-sm" data-peek="streetview">現地の景色</button></div>
@@ -1169,16 +1171,61 @@
       catch (err) { toast(err.message, true); }
     }));
 
+    // Googleマップのリンクから行き先を読み取る
+    $('#btnMapsPaste').addEventListener('click', async () => {
+      try {
+        const t = await navigator.clipboard.readText();
+        $('#mapsLinkInput').value = t.trim();
+        if (/https?:\/\//.test(t)) $('#btnMapsResolve').click();
+      } catch { toast('貼り付けできませんでした。入力欄を長押しして貼り付けてください', true); }
+    });
+    $('#mapsLinkInput').addEventListener('paste', () => setTimeout(() => {
+      if (/https?:\/\/\S*(goo\.gl|google\.)/.test($('#mapsLinkInput').value)) $('#btnMapsResolve').click();
+    }, 50));
+    $('#btnMapsResolve').addEventListener('click', e => busyButton(e.currentTarget, async () => {
+      const text = $('#mapsLinkInput').value.trim();
+      if (!text) { toast('Googleマップのリンクを貼り付けてください', true); return; }
+      loading('リンクから場所を読み取り中…');
+      try {
+        const r = await api('resolveMapUrl', { text });
+        fillAddForm(r.spot);
+        const dup = S.spots.find(s => Math.abs(s.lat - r.spot.lat) < 0.002 && Math.abs(s.lng - r.spot.lng) < 0.002);
+        const box = $('#mapsResolved');
+        box.innerHTML = `<p><strong>${esc(r.spot.name)}</strong><br>📍 ${esc(r.spot.address || '')}（${r.spot.lat}, ${r.spot.lng}）</p>
+          ${dup ? `<p class="warn">近くに登録済みの行き先「${esc(dup.name)}」があります。</p>` : ''}
+          ${S.mapsKey ? `<div class="peek"><iframe src="${esc(mapsEmbedUrl(r.spot, 'view'))}" loading="lazy" title="読み取った場所"></iframe></div>` : ''}
+          <p class="note">内容を確認・修正して「行き先に登録」を押してください。</p>`;
+        box.hidden = false;
+      } catch (err) { toast(err.message, true); }
+      finally { loading(false); }
+    }));
+
     $('#addSpotForm').addEventListener('submit', async e => {
       e.preventDefault();
       const f = e.target;
       const spot = Object.fromEntries(new FormData(f).entries());
       spot.lat = Number(spot.lat); spot.lng = Number(spot.lng);
+      if (spot.maps_url) spot.source = 'googlemap';
       await busyButton($('button[type=submit]', f), async () => {
-        try { const r = await api('upsertSpot', { spot }); toast(r.message); f.reset(); await loadSpots(); }
-        catch (err) { toast(err.message, true); }
+        try {
+          const r = await api('upsertSpot', { spot });
+          toast(r.message);
+          f.reset();
+          $('#mapsLinkInput').value = '';
+          $('#mapsResolved').hidden = true;
+          await loadSpots();
+        } catch (err) { toast(err.message, true); }
       });
     });
+  }
+
+  function fillAddForm(sp) {
+    const f = $('#addSpotForm');
+    ['name', 'lat', 'lng', 'description', 'address', 'maps_url', 'flight_video_url', 'image_url'].forEach(k => {
+      if (f[k]) f[k].value = sp[k] ?? '';
+    });
+    f.category.value = C.CATEGORIES[sp.category] ? sp.category : 'その他';
+    f.activity_tags.value = Array.isArray(sp.activity_tags) ? sp.activity_tags.join(',') : (sp.activity_tags || '');
   }
 
   function renderAdminList() {

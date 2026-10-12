@@ -1,7 +1,7 @@
 # 現地集合フライト（eagle-genchi-flight）
 
 「イーグル隊長の空中散歩」連動型 仮想イベント＆目的地フライトプラットフォーム  
-`v1.2.0 (Build 20261013)`
+`v1.3.0 (Build 20261013)`
 
 ## 1. アーキテクチャ
 
@@ -30,6 +30,8 @@
 | Spots | spot_id, name, lat, lng, description, category, flight_video_url, activity_tags, image_url, source, createdAt, updatedAt | 目的地。activity_tagsはカンマ区切り。sourceは取り込み名（一括削除用） |
 | ActivityLogs | id, ts, spot_id, email, nickname, type, payload | 広場のログ。type=join/leave/chat/action/npc、payloadはJSON |
 | Presence | key, spot_id, email, nickname, avatar, x, y, lastSeen | 在室情報。key=`spot_id|email`、45秒更新なしで退出扱い |
+
+Spots には v1.3.0 で `address, maps_url` 列を末尾に追加しました（既存シートは自動で見出しを補います）。
 
 `category` は `BBQ / 音楽 / 観光 / 自然 / グルメ / 夜景 / その他`。
 
@@ -61,6 +63,7 @@
 | deleteSpot（管理者） | `spot_id` | `message` |
 | deleteSpotsBySource（管理者） | `source` | `deleted, message` |
 | importPreview（管理者） | `text?, url?` | `items[]`（整形済み・未登録）, `count` |
+| resolveMapUrl（管理者） | `text`（Googleマップの共有リンクを含む文字列） | `spot{name, lat, lng, address, maps_url, description, category, activity_tags}`（未登録の下書き） |
 | importCommit（管理者） | `items[], source?` | `added, skipped, source, message` |
 
 ### エンタメ・ナビ
