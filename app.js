@@ -77,6 +77,10 @@
     if (!j.ok) {
       if (j.error === 'auth_required') handleExpired(j.message);
       else if (j.error === 'must_change') openPwModal(true);
+      if (j.error === 'unknown_action') {
+        renderVersion();
+        throw new ApiError(`サーバー（GAS）が古い版のままです（画面は ${C.VERSION}）。Code.gs を最新に貼り替え、「デプロイを管理」から新バージョンで再デプロイしてください`, j.error);
+      }
       throw new ApiError(j.message || 'エラーが発生しました', j.error);
     }
     return j;

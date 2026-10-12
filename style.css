@@ -146,6 +146,7 @@ label > input, label > select, label > .pw-wrap { margin-top: .25em; }
 
 .filter-row { display: flex; gap: .5rem; align-items: center; }
 .filter-row > select { width: auto; }
+.filter-row > .btn, .filter-row > .file-btn { white-space: nowrap; flex-shrink: 0; }
 .spot-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .2rem; max-height: 42vh; overflow-y: auto; }
 .spot-list button {
   width: 100%; text-align: left; border: 0; background: none; padding: .55em .6em; border-radius: var(--radius-s);
