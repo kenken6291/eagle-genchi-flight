@@ -216,6 +216,7 @@
 
     <aside class="plaza-side">
       <div id="callBar" class="call-bar"></div>
+      <div id="exprBar" class="expr-bar" aria-label="自分の表情"></div>
       <div id="actionBar" class="action-bar"></div>
       <div id="phraseBar" class="phrase-bar"></div>
       <ol id="chatLog" class="chat-log" aria-live="polite"></ol>
@@ -303,11 +304,29 @@
 
 <!-- ============ プロフィール ============ -->
 <div id="profileModal" class="modal" hidden>
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="profTitle">
+  <div class="modal-card modal-mid" role="dialog" aria-modal="true" aria-labelledby="profTitle">
     <h2 id="profTitle">プロフィール</h2>
     <form id="profileForm">
       <label>ニックネーム<input name="nickname" type="text" maxlength="20" required></label>
-      <fieldset class="avatar-pick"><legend>広場でのアバター</legend><div id="avatarChoices"></div></fieldset>
+      <fieldset class="face-pick">
+        <legend>現地でのアイコン（顔写真）</legend>
+        <p class="note">4つの表情を登録すると、現地広場で自分の顔が動き、会話の内容で表情が変わります。顔が真ん中に来るように撮ってください。</p>
+        <div id="faceSlots" class="face-slots"></div>
+        <div id="faceCam" class="face-cam" hidden>
+          <video id="faceVideo" playsinline muted></video>
+          <p id="faceCamLabel" class="face-cam-label"></p>
+          <div class="face-cam-actions">
+            <button type="button" id="btnShutter" class="btn btn-amber">撮影する</button>
+            <button type="button" id="btnCamClose" class="btn btn-ghost">カメラを閉じる</button>
+          </div>
+        </div>
+        <div class="face-actions">
+          <button type="button" id="btnFaceSave" class="btn btn-primary" disabled>顔写真を保存</button>
+          <button type="button" id="btnFaceDelete" class="btn btn-ghost">顔写真を削除</button>
+        </div>
+        <input id="faceFile" type="file" accept="image/*" capture="user" hidden>
+      </fieldset>
+      <fieldset class="avatar-pick"><legend>顔写真が無いときのアバター</legend><div id="avatarChoices"></div></fieldset>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" id="btnOpenPw">パスワード変更</button>
         <button type="button" class="btn btn-ghost" data-close>閉じる</button>

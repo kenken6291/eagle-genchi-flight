@@ -13,6 +13,7 @@
  *   TTS_MODEL        : 任意  既定 gemini-2.5-flash-preview-tts
  *   TTS_VOICE        : 任意  既定 Puck
  *   TTS_FOLDER_ID    : 任意  生成音声(wav)をキャッシュ保存するDriveフォルダID
+ *   FACE_FOLDER_ID   : 任意  顔写真の保存先DriveフォルダID（未設定なら自動作成して記録）
  *   SPREADSHEET_ID   : 任意  スタンドアロンGASの場合のみ（コンテナバインドなら不要）
  *   ADMIN_EMAILS     : 任意  管理者メール（カンマ区切り）
  *   SHOW_TEMP_PASSWORD : 任意  'true' で新規登録時に仮PWを画面にも表示
@@ -23,16 +24,16 @@
  * ■ コード変更後は「デプロイを管理 → 編集 → 新バージョン」で再デプロイが必要
  ******************************************************************/
 
-const APP = { NAME: '現地集合フライト', VERSION: 'v1.5.0', BUILD: '20261013' };
+const APP = { NAME: '現地集合フライト', VERSION: 'v1.6.0', BUILD: '20261013' };
 
 const SHEET_DEF = {
   Users: ['email', 'nickname', 'salt', 'hash', 'mustChange', 'role', 'status',
-          'failCount', 'lockedUntil', 'avatar', 'createdAt', 'lastLogin'],
+          'failCount', 'lockedUntil', 'avatar', 'createdAt', 'lastLogin', 'faces', 'faceVer'],
   Spots: ['spot_id', 'name', 'lat', 'lng', 'description', 'category',
           'flight_video_url', 'activity_tags', 'image_url', 'source', 'createdAt', 'updatedAt',
           'address', 'maps_url'],
   ActivityLogs: ['id', 'ts', 'spot_id', 'email', 'nickname', 'type', 'payload'],
-  Presence: ['key', 'spot_id', 'email', 'nickname', 'avatar', 'x', 'y', 'lastSeen'],
+  Presence: ['key', 'spot_id', 'email', 'nickname', 'avatar', 'x', 'y', 'lastSeen', 'expr'],
   Calls: ['id', 'spot_id', 'service', 'url', 'title', 'email', 'nickname', 'createdAt', 'expiresAt', 'status']
 };
 
@@ -90,6 +91,9 @@ const ROUTES = {
   changePassword: changePassword_,
   resetPassword: resetPassword_,
   updateProfile: updateProfile_,
+  saveFaces: saveFaces_,
+  deleteFaces: deleteFaces_,
+  getFaces: getFaces_,
   clientConfig: clientConfig_,
   // スポット
   getSpots: getSpots_,
@@ -338,8 +342,77 @@ function publicUser_(u) {
     nickname: u.nickname,
     avatar: u.avatar || '🙂',
     role: isAdmin_(u) ? 'admin' : 'member',
-    mustChange: isTrue_(u.mustChange)
+    mustChange: isTrue_(u.mustChange),
+    memberId: memberId_(u.email),
+    faceVer: Number(u.faceVer || 0),
+    faceExprs: Object.keys(safeJson_(u.faces))
   };
+}
+
+/* =================================================================
+ * 顔写真（普通・笑顔・困った顔・驚いた顔）
+ *   画像は非公開のDriveフォルダに保存し、ログイン中の会員にだけ base64 で配る
+ * ================================================================= */
+const EXPRS = ['normal', 'smile', 'trouble', 'surprise'];
+const FACE_MAX_B64 = 300000; // 1枚あたり約220KBまで（フロントで256px程度に縮小済み）
+
+function faceFolder_() {
+  const id = prop_('FACE_FOLDER_ID', '');
+  if (id) { try { return DriveApp.getFolderById(id); } catch (e) { /* 作り直す */ } }
+  const f = DriveApp.createFolder(APP.NAME + '_顔写真');
+  props_().setProperty('FACE_FOLDER_ID', f.getId());
+  return f;
+}
+
+function saveFaces_(req) {
+  const u = auth_(req);
+  const input = req.faces || {};
+  const keys = EXPRS.filter(k => input[k]);
+  if (!keys.length) fail_('empty', '保存する顔写真がありません');
+  const faces = safeJson_(u.faces);
+  const folder = faceFolder_();
+  const mid = memberId_(u.email);
+  keys.forEach(k => {
+    const m = String(input[k]).match(/^data:(image\/(jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/);
+    if (!m) fail_('bad_image', '画像の形式が正しくありません（JPEG/PNG/WebP）');
+    if (m[3].length > FACE_MAX_B64) fail_('too_large', '画像が大きすぎます。撮り直してください');
+    if (faces[k]) { try { DriveApp.getFileById(faces[k]).setTrashed(true); } catch (e) { /* 既に無い */ } }
+    const blob = Utilities.newBlob(Utilities.base64Decode(m[3]), m[1], 'face_' + mid + '_' + k + '.' + (m[2] === 'jpeg' ? 'jpg' : m[2]));
+    faces[k] = folder.createFile(blob).getId();
+  });
+  updateObj_('Users', u._row, { faces: JSON.stringify(faces), faceVer: Date.now() });
+  return { user: publicUser_(findUser_(u.email)), message: '顔写真を保存しました' };
+}
+
+function deleteFaces_(req) {
+  const u = auth_(req);
+  const faces = safeJson_(u.faces);
+  Object.keys(faces).forEach(k => { try { DriveApp.getFileById(faces[k]).setTrashed(true); } catch (e) { /* 既に無い */ } });
+  updateObj_('Users', u._row, { faces: '', faceVer: 0 });
+  return { user: publicUser_(findUser_(u.email)), message: '顔写真を削除しました' };
+}
+
+/** ids: 広場のメンバーID（最大30人分）→ { id: { ver, normal, smile, trouble, surprise } } */
+function getFaces_(req) {
+  auth_(req);
+  const want = (Array.isArray(req.ids) ? req.ids : []).map(String).slice(0, 30);
+  const out = {};
+  if (!want.length) return { faces: out };
+  readAll_('Users').forEach(u => {
+    const mid = memberId_(u.email);
+    if (want.indexOf(mid) < 0 || !Number(u.faceVer)) return;
+    const faces = safeJson_(u.faces);
+    const item = { ver: Number(u.faceVer) };
+    EXPRS.forEach(k => {
+      if (!faces[k]) return;
+      try {
+        const b = DriveApp.getFileById(faces[k]).getBlob();
+        item[k] = 'data:' + b.getContentType() + ';base64,' + Utilities.base64Encode(b.getBytes());
+      } catch (e) { /* 削除済みなど */ }
+    });
+    out[mid] = item;
+  });
+  return { faces: out };
 }
 
 function isAdmin_(u) {
@@ -733,7 +806,16 @@ function plazaPost_(req) {
     if (type === 'chat') {
       const text = String(payload.text || '').trim().slice(0, 140);
       if (!text) fail_('empty', 'メッセージを入力してください');
-      return { id: appendLog_(spotId, u.email, u.nickname, 'chat', { text }) };
+      const expr = EXPRS.indexOf(payload.expr) >= 0 ? payload.expr : '';
+      return { id: appendLog_(spotId, u.email, u.nickname, 'chat', { text, expr }) };
+    }
+    if (type === 'expr') {
+      // 自分で選んだ表情（次に変えるまで続く）
+      const expr = EXPRS.indexOf(payload.expr) >= 0 ? payload.expr : 'normal';
+      const key = spotId + '|' + normEmail_(u.email);
+      const p = readAll_('Presence').find(r => r.key === key);
+      if (p) updateObj_('Presence', p._row, { expr, lastSeen: Date.now() });
+      return {};
     }
     if (type === 'action') {
       const id = String(payload.id || '').slice(0, 20);
@@ -906,9 +988,16 @@ function touchPresence_(u, spotId, pos, force) {
 
 function members_(spotId) {
   const limit = Date.now() - PRESENCE_TIMEOUT_MS;
-  return readAll_('Presence')
-    .filter(r => String(r.spot_id) === spotId && Number(r.lastSeen) > limit)
-    .map(r => ({ id: memberId_(r.email), nickname: r.nickname, avatar: r.avatar || '🙂', x: Number(r.x), y: Number(r.y) }));
+  const rows = readAll_('Presence').filter(r => String(r.spot_id) === spotId && Number(r.lastSeen) > limit);
+  if (!rows.length) return [];
+  const ver = {};
+  readAll_('Users').forEach(u => { ver[normEmail_(u.email)] = Number(u.faceVer || 0); });
+  return rows.map(r => ({
+    id: memberId_(r.email), nickname: r.nickname, avatar: r.avatar || '🙂',
+    x: Number(r.x), y: Number(r.y),
+    expr: EXPRS.indexOf(r.expr) >= 0 ? r.expr : 'normal',
+    faceVer: ver[normEmail_(r.email)] || 0
+  }));
 }
 
 function appendLog_(spotId, email, nickname, type, payload) {

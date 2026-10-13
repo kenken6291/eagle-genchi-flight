@@ -370,7 +370,10 @@
       f.nickname.value = S.user.nickname;
       const box = $('#avatarChoices');
       box.innerHTML = C.AVATARS.map(a => `<button type="button" data-av="${a}" class="${a === S.user.avatar ? 'is-on' : ''}" aria-label="${a}">${a}</button>`).join('');
+      FaceEdit.pending = {};
+      renderFaceSlots();
       openModal('#profileModal');
+      ensureOwnFaces().then(renderFaceSlots);
     });
     $('#avatarChoices').addEventListener('click', e => {
       const b = e.target.closest('[data-av]');
@@ -394,7 +397,8 @@
   }
 
   function renderUserChip() {
-    $('#userAvatar').textContent = S.user?.avatar || '🙂';
+    const myFace = ownFaces().normal;
+    $('#userAvatar').innerHTML = myFace ? `<img class="chip-face" src="${myFace}" alt="">` : esc(S.user?.avatar || '🙂');
     $('#userName').textContent = S.user?.nickname || '';
     $('#btnAdmin').hidden = S.user?.role !== 'admin';
   }
@@ -404,7 +408,7 @@
     renderUserChip();
     initMap();
     if (S.user?.mustChange) { openPwModal(true); return; }
-    await Promise.all([loadClientConfig(), loadSpots()]);
+    await Promise.all([loadClientConfig(), loadSpots(), ensureOwnFaces()]);
   }
 
   /* ---------- スクリプトプロパティ由来の設定（Google Maps APIキー等） ---------- */
@@ -1079,6 +1083,247 @@
   }
 
   /* =============================================================
+   * 顔写真アイコン（普通・笑顔・困った顔・驚いた顔）
+   * ============================================================= */
+  const EXPRS = C.EXPRESSIONS || [];
+  S.faceCache = new Map();          // memberId → { ver, imgs: { normal, smile, trouble, surprise } }
+  const FaceEdit = { pending: {}, slot: null, stream: null };
+  let faceFetching = false;
+
+  // 広場のメンバーの顔写真を、まだ持っていない／更新された人の分だけ取り寄せる
+  async function ensureFaces(members) {
+    const need = members.filter(m => m.faceVer > 0 && (S.faceCache.get(m.id)?.ver || 0) < m.faceVer);
+    if (!need.length || faceFetching) return;
+    faceFetching = true;
+    try {
+      const r = await api('getFaces', { ids: need.map(m => m.id) });
+      need.forEach(m => {
+        const f = (r.faces || {})[m.id];
+        const { ver, ...imgs } = f || {};
+        S.faceCache.set(m.id, { ver: ver || m.faceVer, imgs: f ? imgs : {} });
+        refreshFace(m.id);
+      });
+      if (need.some(m => m.id === S.user?.memberId)) { renderUserChip(); renderExprBar(); }
+    } catch { /* 次の更新で再試行 */ }
+    finally { faceFetching = false; }
+  }
+
+  async function ensureOwnFaces() {
+    if (!S.user?.memberId) return;
+    await ensureFaces([{ id: S.user.memberId, faceVer: S.user.faceVer || 0 }]);
+  }
+
+  const ownFaces = () => S.faceCache.get(S.user?.memberId)?.imgs || {};
+
+  function refreshFace(id) {
+    const el = $(`#avatars .avatar[data-id="${CSS.escape(id)}"]`);
+    if (el) paintFace(el);
+  }
+
+  // アバターの顔を、いまの表情の写真で描く（写真が無ければ絵文字）
+  function paintFace(el) {
+    const face = $('.face', el);
+    const imgs = S.faceCache.get(el.dataset.id)?.imgs;
+    const expr = el.dataset.temp || el.dataset.base || 'normal';
+    const src = imgs && (imgs[expr] || imgs.normal);
+    if (src) {
+      let img = $('img', face);
+      if (!img) { face.textContent = ''; img = document.createElement('img'); img.alt = ''; face.appendChild(img); }
+      face.classList.add('has-photo');
+      if (img.getAttribute('src') !== src) {
+        img.src = src;
+        face.classList.remove('swap'); void face.offsetWidth; face.classList.add('swap');
+      }
+    } else {
+      face.classList.remove('has-photo');
+      face.textContent = el.dataset.emoji || '🙂';
+    }
+    el.dataset.expr = expr;
+  }
+
+  // 会話・動作による一時的な表情（数秒で元に戻る）
+  function setTempExpr(id, expr) {
+    const el = $(`#avatars .avatar[data-id="${CSS.escape(id)}"]`);
+    if (!el || !expr) return;
+    el.dataset.temp = expr;
+    paintFace(el);
+    clearTimeout(el._exprTimer);
+    el._exprTimer = setTimeout(() => { delete el.dataset.temp; paintFace(el); }, C.EXPR_HOLD_MS || 8000);
+  }
+
+  function detectExpr(text) {
+    const t = String(text || '');
+    for (const k of ['surprise', 'trouble', 'smile']) {
+      if ((C.EXPR_WORDS?.[k] || []).some(w => t.includes(w))) return k;
+    }
+    return null;
+  }
+
+  // 広場の「自分の表情」ボタン
+  function renderExprBar() {
+    const P = S.plaza;
+    if (!P) return;
+    const mine = ownFaces();
+    const has = Object.keys(mine).length > 0;
+    $('#exprBar').innerHTML = EXPRS.map(e => `
+      <button type="button" class="expr-btn${(P.myExpr || 'normal') === e.id ? ' is-on' : ''}" data-expr="${e.id}" aria-pressed="${(P.myExpr || 'normal') === e.id}">
+        ${mine[e.id] ? `<img src="${mine[e.id]}" alt="">` : `<span>${e.emoji}</span>`}${esc(e.label)}
+      </button>`).join('') +
+      (has ? '' : '<button type="button" class="expr-hint" data-open-profile>顔写真を登録すると自分の顔で表情が変わります</button>');
+  }
+
+  function setMyExpr(expr) {
+    const P = S.plaza;
+    if (!P) return;
+    P.myExpr = expr;
+    const el = $(`#avatars .avatar[data-id="${CSS.escape(P.me)}"]`);
+    if (el) { el.dataset.base = expr; delete el.dataset.temp; paintFace(el); }
+    renderExprBar();
+    postPlaza('expr', { expr });
+  }
+
+  /* ---------- 登録画面（プロフィール内） ---------- */
+  function renderFaceSlots() {
+    const mine = ownFaces();
+    $('#faceSlots').innerHTML = EXPRS.map(e => {
+      const src = FaceEdit.pending[e.id] || mine[e.id];
+      return `<div class="face-slot${FaceEdit.slot === e.id ? ' is-target' : ''}" data-expr="${e.id}">
+        <div class="face-thumb">${src ? `<img src="${src}" alt="${esc(e.label)}の顔写真">` : `<span>${e.emoji}</span>`}</div>
+        <strong>${esc(e.label)}</strong>
+        <div class="face-slot-btns">
+          <button type="button" class="btn btn-ghost btn-sm" data-face-cam="${e.id}">カメラ</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-face-file="${e.id}">写真</button>
+        </div>
+        ${FaceEdit.pending[e.id] ? '<span class="face-new">未保存</span>' : ''}
+      </div>`;
+    }).join('');
+    $('#btnFaceSave').disabled = !Object.keys(FaceEdit.pending).length;
+    $('#btnFaceDelete').hidden = !(S.user?.faceVer > 0);
+  }
+
+  // 中央を正方形に切り抜いて縮小
+  function toSquare(src, sw, sh, mirror = false) {
+    const N = C.FACE_SIZE || 256;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = N;
+    const ctx = cv.getContext('2d');
+    const side = Math.min(sw, sh);
+    if (mirror) { ctx.translate(N, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(src, (sw - side) / 2, (sh - side) / 2, side, side, 0, 0, N, N);
+    return cv.toDataURL('image/jpeg', 0.85);
+  }
+
+  async function startFaceCam(expr) {
+    FaceEdit.slot = expr;
+    try {
+      if (!FaceEdit.stream) {
+        FaceEdit.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 720 } }, audio: false });
+        $('#faceVideo').srcObject = FaceEdit.stream;
+        await $('#faceVideo').play();
+      }
+      $('#faceCam').hidden = false;
+      updateCamLabel();
+      renderFaceSlots();
+    } catch {
+      toast('カメラを使えませんでした。「写真」から選んでください', true);
+      stopFaceCam();
+    }
+  }
+
+  function updateCamLabel() {
+    const e = EXPRS.find(x => x.id === FaceEdit.slot);
+    $('#faceCamLabel').textContent = e ? `「${e.label}」で撮ります ${e.emoji}` : '';
+  }
+
+  function stopFaceCam() {
+    FaceEdit.stream?.getTracks().forEach(t => t.stop());
+    FaceEdit.stream = null;
+    $('#faceCam').hidden = true;
+    FaceEdit.slot = null;
+    if ($('#faceSlots').children.length) renderFaceSlots();
+  }
+
+  function shutter() {
+    const v = $('#faceVideo');
+    if (!v.videoWidth || !FaceEdit.slot) return;
+    FaceEdit.pending[FaceEdit.slot] = toSquare(v, v.videoWidth, v.videoHeight, true);
+    Music.chime();
+    // まだ撮っていない表情へ自動で進む
+    const mine = ownFaces();
+    const next = EXPRS.find(e => !FaceEdit.pending[e.id] && !mine[e.id] && e.id !== FaceEdit.slot);
+    if (next) { FaceEdit.slot = next.id; updateCamLabel(); renderFaceSlots(); }
+    else { stopFaceCam(); toast('撮影しました。「顔写真を保存」を押してください'); }
+  }
+
+  async function pickFaceFile(file) {
+    const expr = FaceEdit.slot;
+    if (!file || !expr) return;
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      await new Promise((ok, ng) => { img.onload = ok; img.onerror = ng; img.src = url; });
+      FaceEdit.pending[expr] = toSquare(img, img.naturalWidth, img.naturalHeight);
+      renderFaceSlots();
+    } catch { toast('画像を読み込めませんでした', true); }
+    finally { URL.revokeObjectURL(url); }
+  }
+
+  function initFaces() {
+    $('#faceSlots').addEventListener('click', e => {
+      const cam = e.target.closest('[data-face-cam]');
+      const file = e.target.closest('[data-face-file]');
+      if (cam) startFaceCam(cam.dataset.faceCam);
+      if (file) { FaceEdit.slot = file.dataset.faceFile; $('#faceFile').click(); }
+    });
+    $('#faceFile').addEventListener('change', e => { pickFaceFile(e.target.files[0]); e.target.value = ''; });
+    $('#btnShutter').addEventListener('click', shutter);
+    $('#btnCamClose').addEventListener('click', stopFaceCam);
+
+    $('#btnFaceSave').addEventListener('click', e => busyButton(e.currentTarget, async () => {
+      const faces = { ...FaceEdit.pending };
+      if (!Object.keys(faces).length) return;
+      loading('顔写真を保存中…');
+      try {
+        const r = await api('saveFaces', { faces });
+        S.user = r.user; updateStoredUser();
+        S.faceCache.set(S.user.memberId, { ver: S.user.faceVer, imgs: { ...ownFaces(), ...faces } });
+        FaceEdit.pending = {};
+        renderFaceSlots(); renderUserChip(); renderExprBar();
+        refreshFace(S.user.memberId);
+        toast(r.message);
+      } catch (err) { toast(err.message, true); }
+      finally { loading(false); }
+    }));
+
+    $('#btnFaceDelete').addEventListener('click', e => {
+      if (!confirm('登録した顔写真をすべて削除しますか？')) return;
+      busyButton(e.currentTarget, async () => {
+        try {
+          const r = await api('deleteFaces');
+          S.faceCache.delete(S.user.memberId);
+          S.user = r.user; updateStoredUser();
+          FaceEdit.pending = {};
+          renderFaceSlots(); renderUserChip(); renderExprBar();
+          refreshFace(r.user.memberId);
+          toast(r.message);
+        } catch (err) { toast(err.message, true); }
+      });
+    });
+
+    // プロフィールを閉じたらカメラも止める
+    new MutationObserver(() => { if ($('#profileModal').hidden) { stopFaceCam(); FaceEdit.pending = {}; } })
+      .observe($('#profileModal'), { attributes: true, attributeFilter: ['hidden'] });
+
+    $('#exprBar').addEventListener('click', e => {
+      const b = e.target.closest('[data-expr]');
+      if (b) setMyExpr(b.dataset.expr);
+    });
+    document.addEventListener('click', e => {
+      if (e.target.closest('[data-open-profile]')) $('#btnProfile').click();
+    });
+  }
+
+  /* =============================================================
    * 現地合流広場
    * ============================================================= */
   async function enterPlaza(spot) {
@@ -1086,7 +1331,7 @@
     const P = S.plaza = {
       spot, me: null, since: 0, seen: new Set(), timers: [],
       members: new Map(), polling: false, moveTimer: null,
-      calls: [], bgCache: {}, bgImg: null, bgKind: null
+      calls: [], bgCache: {}, bgImg: null, bgKind: null, myExpr: 'normal'
     };
     $('#plazaName').textContent = `${catOf(spot.category).emoji} ${spot.name}`;
     $('#plazaCount').textContent = '合流中…';
@@ -1105,6 +1350,7 @@
     $('#plazaCaptainText').textContent = '';
     C.NPCS.forEach(n => upsertAvatar({ id: 'npc:' + n.id, nickname: n.name, avatar: n.emoji, x: n.x, y: n.y }, 'npc'));
     renderCalls([]);
+    renderExprBar();
 
     const pos = { x: 20 + Math.random() * 60, y: 62 + Math.random() * 26 };
     try {
@@ -1170,6 +1416,7 @@
     const P = S.plaza;
     const ids = new Set(list.map(m => m.id));
     list.forEach(m => upsertAvatar(m, m.id === P.me ? 'me' : 'member'));
+    ensureFaces(list);
     $$('#avatars .avatar[data-kind="member"]').forEach(el => { if (!ids.has(el.dataset.id)) el.remove(); });
     $('#plazaCount').textContent = `いま${list.length}人が合流中（NPC ${C.NPCS.length}人）`;
   }
@@ -1184,7 +1431,11 @@
       el.innerHTML = '<span class="face"></span><span class="name"></span>';
       $('#avatars').appendChild(el);
     }
-    $('.face', el).textContent = m.avatar || '🙂';
+    el.dataset.emoji = m.avatar || '🙂';
+    // 表情：自分は手元で選んだもの、他の人はサーバーの値
+    if (kind === 'me') el.dataset.base = S.plaza?.myExpr || m.expr || 'normal';
+    else if (kind !== 'npc') el.dataset.base = m.expr || 'normal';
+    paintFace(el);
     $('.name', el).textContent = m.nickname || '';
     // 自分の位置はローカル操作を優先
     if (kind !== 'me' || !el.dataset.placed) {
@@ -1211,7 +1462,7 @@
         if (!mine) chatLine(null, `${log.nickname}さんが飛び立ちました`);
         break;
       case 'chat':
-        if (!mine) { chatLine(log.nickname, p.text); bubble(log.member, p.text); }
+        if (!mine) { chatLine(log.nickname, p.text); bubble(log.member, p.text); setTempExpr(log.member, p.expr); }
         break;
       case 'action':
         if (!mine) { doAction(log.member, p.id, p.song); chatLine(null, `${log.nickname}さん：${actionLabel(p.id)}`); }
@@ -1264,6 +1515,7 @@
     const el = $(`#avatars .avatar[data-id="${CSS.escape(memberId)}"]`);
     const act = C.ACTIONS.find(a => a.id === actId);
     if (!el || !act) return;
+    if (!memberId.startsWith('npc:')) setTempExpr(memberId, 'smile');
     el.classList.remove(...C.ACTIONS.map(a => 'act-' + a.id));
     void el.offsetWidth;
     el.classList.add('act-' + actId);
@@ -1299,9 +1551,11 @@
     const P = S.plaza;
     text = String(text || '').trim().slice(0, 140);
     if (!P || !text) return;
+    const expr = detectExpr(text);
     chatLine(S.user.nickname, text);
     bubble(P.me, text);
-    postPlaza('chat', { text });
+    setTempExpr(P.me, expr);
+    postPlaza('chat', { text, expr });
   }
 
   function leavePlaza(silent = false) {
@@ -1932,6 +2186,7 @@
     initPlaza();
     initAdmin();
     initCall();
+    initFaces();
     initSettings();
     renderVersion();
 

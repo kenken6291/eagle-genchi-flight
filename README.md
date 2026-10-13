@@ -1,7 +1,7 @@
 # 現地集合フライト（eagle-genchi-flight）
 
 「イーグル隊長の空中散歩」連動型 仮想イベント＆目的地フライトプラットフォーム  
-`v1.5.0 (Build 20261013)`
+`v1.6.0 (Build 20261013)`
 
 ## 1. アーキテクチャ
 
@@ -118,6 +118,14 @@ v1.4.0 から、フライトは Google Maps JavaScript API の **フォトリア
   - 未設定・失敗時は「現地のイラスト」で背景を作れます。
 - シート `Calls`（id, spot_id, service, url, title, email, nickname, createdAt, expiresAt, status）が自動で作られます。
 - API：`callPost {spot_id, url, title}` / `callEnd {id}` / `callBackground {spot_id, kind(street/aerial/photo), heading}`。`plazaJoin`・`plazaPoll` の応答に `calls[]` が加わりました。
+
+## 5-4. 顔写真アイコン（v1.6.0）
+
+- プロフィールで「普通・笑顔・困った顔・驚いた顔」の4表情を、カメラ撮影または写真から登録します（中央を正方形に切り抜き 256px の JPEG に縮小）。カメラは1枚撮ると次の表情へ自動で進みます。
+- 画像は非公開の Drive フォルダ（`FACE_FOLDER_ID`、未設定なら自動作成）に保存し、ログイン中の会員にだけ `getFaces` で base64 を配ります。一般公開はしません。
+- 表情の変わり方：広場の「自分の表情」ボタンで選んだ表情が基本（全員に反映）。チャットの言葉（`config.js` の `EXPR_WORDS`）や動作（肉を焼く・踊る等＝笑顔）で、数秒間だけ表情が変わります。
+- シートに列を追加：Users に `faces, faceVer`、Presence に `expr`（既存シートは見出しを自動で補います）。
+- API：`saveFaces {faces:{normal,smile,trouble,surprise: dataURL}}` / `deleteFaces` / `getFaces {ids:[memberId]}`。`plazaPost` に `type:'expr'` を追加、`members[]` に `expr, faceVer` を追加。
 
 ## 5-2. Google Earth Studio → Google Drive 配信（任意）
 
