@@ -328,12 +328,18 @@
       });
     });
 
-    $('#btnLogout').addEventListener('click', async () => {
+    const doLogout = () => {
+      if (!confirm('ログアウトしますか？')) return;
       api('logout').catch(() => {});
+      leavePlaza(true);
+      closeFlight();
+      $$('.modal').forEach(m => { m.hidden = true; m.classList.remove('is-forced'); });
       clearSession();
       showView('auth');
       toast('ログアウトしました');
-    });
+    };
+    $('#btnLogout').addEventListener('click', doLogout);
+    $('#btnProfileLogout').addEventListener('click', doLogout);
   }
 
   /* ---------- パスワード変更 ---------- */

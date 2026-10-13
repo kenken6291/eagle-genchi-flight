@@ -124,6 +124,7 @@ label > input, label > select, label > .pw-wrap { margin-top: .25em; }
 .topbar-actions { display: flex; gap: .5rem; align-items: center; }
 .topbar .btn-ghost { color: #fff; border-color: rgba(255,255,255,.35); }
 .topbar .btn-ghost:hover { background: rgba(255,255,255,.12); }
+.topbar-actions { flex-wrap: wrap; justify-content: flex-end; }
 .user-chip {
   display: flex; align-items: center; gap: .4em; border: 0; cursor: pointer;
   background: rgba(255,255,255,.14); color: #fff; padding: .35em .9em; border-radius: 999px; font-weight: 700;
@@ -577,12 +578,21 @@ label > input, label > select, label > .pw-wrap { margin-top: .25em; }
   .map-wrap { height: 48vh; }
   .panel { border-left: 0; overflow: visible; }
   .brand-name { font-size: 1rem; }
-  #btnLogout { display: none; }
   .plaza-body { grid-template-columns: 1fr; }
   .stage { height: 58vh; }
   .chat-log { max-height: 30vh; }
   .grid-form { grid-template-columns: 1fr; }
   .grid-form .span2 { grid-column: auto; }
+}
+
+/* スマホ：上部バーを詰めて、ログアウトまで全部表示する */
+@media (max-width: 640px) {
+  .topbar { padding: .4rem .6rem; gap: .4rem; }
+  .brand-name { display: none; }
+  .brand-mark { font-size: 1.4rem; }
+  .topbar-actions { gap: .3rem; }
+  .topbar .btn, .user-chip { padding: .3em .7em; font-size: .82rem; }
+  #userName { max-width: 5.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 @media (prefers-reduced-motion: reduce) {
