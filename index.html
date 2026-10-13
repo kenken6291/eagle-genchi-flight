@@ -132,20 +132,56 @@
 <!-- ============ フライト ============ -->
 <section id="flightView" class="flight-view" hidden>
   <div id="flightMedia" class="flight-media"></div>
+
   <div class="flight-top">
     <span id="flightDest" class="flight-dest"></span>
-    <button id="btnAbort" class="btn btn-ghost-light">引き返す</button>
+    <div class="flight-top-actions">
+      <button id="btnArrive" class="land-pill" disabled>着陸まで --:--</button>
+      <button id="btnAbort" class="btn btn-ghost-light">引き返す</button>
+    </div>
   </div>
+
+  <!-- イーグル隊長（オリジナルキャラクター） -->
+  <div id="eagleRig" class="eagle-rig" aria-hidden="true">
+    <svg class="eagle" viewBox="0 0 300 220" width="300" height="220">
+      <g class="wing wing-l">
+        <path d="M150 105 C110 70 60 62 8 80 C40 86 52 92 60 98 C38 100 26 108 14 120 C46 116 62 118 74 124 C58 130 50 140 44 152 C78 138 112 128 140 126 Z" fill="#7A4E2A"/>
+        <path d="M60 98 L110 104 M74 124 L118 118" stroke="#5a3a1e" stroke-width="3" fill="none"/>
+      </g>
+      <g class="wing wing-r">
+        <path d="M150 105 C190 70 240 62 292 80 C260 86 248 92 240 98 C262 100 274 108 286 120 C254 116 238 118 226 124 C242 130 250 140 256 152 C222 138 188 128 160 126 Z" fill="#7A4E2A"/>
+        <path d="M240 98 L190 104 M226 124 L182 118" stroke="#5a3a1e" stroke-width="3" fill="none"/>
+      </g>
+      <ellipse cx="150" cy="135" rx="34" ry="46" fill="#8A5A30"/>
+      <ellipse cx="150" cy="142" rx="20" ry="30" fill="#A8743F"/>
+      <path d="M128 176 L120 206 M128 176 L132 206 M172 176 L168 206 M172 176 L180 206" stroke="#F2A93B" stroke-width="5" stroke-linecap="round"/>
+      <path d="M120 98 C130 112 170 112 180 98 L184 108 C170 122 130 122 116 108 Z" fill="#D63B2F"/>
+      <path d="M176 104 L214 128 L204 112 L222 116 Z" fill="#D63B2F" class="scarf-tail"/>
+      <circle cx="150" cy="70" r="34" fill="#fff"/>
+      <path d="M128 50 L172 50" stroke="#5a3a1e" stroke-width="5" stroke-linecap="round"/>
+      <circle cx="137" cy="62" r="11" fill="#BFE3F7" stroke="#4A5A6A" stroke-width="4"/>
+      <circle cx="163" cy="62" r="11" fill="#BFE3F7" stroke="#4A5A6A" stroke-width="4"/>
+      <circle cx="139" cy="64" r="3.5" fill="#1D2B3A"/>
+      <circle cx="161" cy="64" r="3.5" fill="#1D2B3A"/>
+      <path d="M140 80 L160 80 L150 98 Z" fill="#F2A93B"/>
+    </svg>
+    <p id="eagleBubble" class="eagle-bubble" hidden></p>
+  </div>
+
   <p id="flightSub" class="flight-sub" aria-live="polite"></p>
+
   <div class="flight-bottom">
     <p id="flightStatus" class="flight-status"></p>
     <div id="mysteryBox" class="mystery-box" hidden>
       <p>どこへ向かっていると思う？</p>
       <div id="guessChoices" class="guess-choices"></div>
     </div>
-    <div class="flight-buttons">
-      <button id="btnTakeoff" class="btn btn-primary btn-big" hidden>出発！</button>
-      <button id="btnArrive" class="btn btn-amber btn-big" disabled>着陸する</button>
+    <button id="btnTakeoff" class="btn btn-primary btn-big" hidden>出発！</button>
+    <div id="flightCtrl" class="flight-ctrl" hidden>
+      <button id="btnPause" class="btn btn-navy">一時停止</button>
+      <button id="btnNext" class="btn btn-outline">次へ</button>
+      <label class="vol">声<input id="volVoice" type="range" min="0" max="1" step="0.05" value="1"></label>
+      <label class="vol">効果音<input id="volSe" type="range" min="0" max="1" step="0.05" value="0.6"></label>
     </div>
   </div>
   <div id="revealBox" class="reveal" hidden></div>
@@ -159,6 +195,7 @@
       <p id="plazaCount" class="plaza-count"></p>
     </div>
     <div class="plaza-head-actions">
+      <button id="btnCall" class="btn btn-amber">ビデオ通話</button>
       <button id="btnStreetView" class="btn btn-ghost" aria-pressed="false" hidden>現地の景色</button>
       <button id="btnSound" class="btn btn-ghost" aria-pressed="true">音あり</button>
       <button id="btnBgm" class="btn btn-ghost" aria-pressed="false">BGM</button>
@@ -178,6 +215,7 @@
     </div>
 
     <aside class="plaza-side">
+      <div id="callBar" class="call-bar"></div>
       <div id="actionBar" class="action-bar"></div>
       <div id="phraseBar" class="phrase-bar"></div>
       <ol id="chatLog" class="chat-log" aria-live="polite"></ol>
@@ -188,6 +226,54 @@
     </aside>
   </div>
 </section>
+
+<!-- ============ 現地ビデオ通話 ============ -->
+<div id="callModal" class="modal" hidden>
+  <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="callModalTitle">
+    <div class="modal-head"><h2 id="callModalTitle">現地でビデオ通話</h2></div>
+    <p class="note">通話は Google Meet・Zoom・LINE・Messenger(Facebook) のアプリで行います。現地の景色を通話の背景にして、みんなで「現地に集まった」気分で話しましょう。</p>
+
+    <section class="call-sec">
+      <h3 class="sub-title">いま現地で開かれている通話</h3>
+      <ul id="callList" class="call-list"></ul>
+    </section>
+
+    <section class="call-sec">
+      <h3 class="sub-title">1. 現地の背景画像をつくる</h3>
+      <div class="bg-maker">
+        <div class="bg-preview">
+          <canvas id="bgCanvas" width="1920" height="1080" aria-label="背景画像のプレビュー"></canvas>
+          <p id="bgMsg" class="bg-msg" hidden></p>
+        </div>
+        <div class="bg-controls">
+          <div id="bgKinds" class="chips"></div>
+          <label class="check"><input type="checkbox" id="bgLabel" checked> 場所の名前を入れる</label>
+          <button id="btnBgSave" class="btn btn-primary">背景画像を保存</button>
+          <p class="note">自分の画面では文字が左右反転して見えることがありますが、相手には正しく見えます。</p>
+        </div>
+      </div>
+      <details class="howto">
+        <summary>各アプリで背景に設定する方法</summary>
+        <dl>
+          <dt>Zoom</dt><dd>通話中に「ビデオ」横の「^」→「背景とエフェクト」→「＋」で保存した画像を追加します。</dd>
+          <dt>Google Meet</dt><dd>通話中の「︙」→「背景を変更」（または「エフェクトを適用」）→「＋」で画像をアップロードします（パソコン・一部のスマホ）。</dd>
+          <dt>LINE</dt><dd>ビデオ通話中の「エフェクト」→「背景」から写真を選びます。アプリの版や機種によっては自分の写真を選べないことがあります。</dd>
+          <dt>Messenger</dt><dd>ビデオ通話中の「エフェクト」や「背景」から選びます。自分の画像が使えない場合は、Zoom か Meet をおすすめします。</dd>
+        </dl>
+      </details>
+    </section>
+
+    <section class="call-sec">
+      <h3 class="sub-title">2. 通話を始めて、現地に掲示する</h3>
+      <div id="svcGrid" class="svc-grid"></div>
+      <div class="post-row">
+        <input id="callUrl" type="text" inputmode="url" placeholder="通話のリンクを貼り付け（https://…）" autocomplete="off">
+        <input id="callName" type="text" maxlength="30" placeholder="ひとこと（例：BBQ組で話そう）">
+        <button id="btnCallPost" class="btn btn-amber">現地に掲示する</button>
+      </div>
+    </section>
+  </div>
+</div>
 
 <!-- ============ パスワード変更 ============ -->
 <div id="pwModal" class="modal" hidden>
@@ -236,7 +322,6 @@
   <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="adminTitle">
     <div class="modal-head">
       <h2 id="adminTitle">スポット管理</h2>
-      <button type="button" class="btn btn-ghost" data-close>閉じる</button>
     </div>
     <nav class="admin-tabs">
       <button class="admin-tab is-active" data-tab="import">外部から取り込む</button>
@@ -302,7 +387,6 @@
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
     <div class="modal-head">
       <h2 id="settingsTitle">設定</h2>
-      <button type="button" class="btn btn-ghost" data-close>閉じる</button>
     </div>
     <nav class="admin-tabs">
       <button class="settings-tab admin-tab is-active" data-tab="gas">接続先（GAS）</button>

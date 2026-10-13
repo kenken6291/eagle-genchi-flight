@@ -19,7 +19,8 @@
     token: null, user: null,
     spots: [], map: null, markers: new Map(), selected: null,
     busy: false, flight: null, plaza: null,
-    sound: true, audio: null, audioUrl: null,
+    sound: true, audio: null, audioUrl: null, voiceVol: 1, seVol: 0.6,
+    startPoint: null, maps3dFailed: false,
     importItems: [],
     mapsKey: ''   // GOOGLE_MAPS_API_KEY（ログイン後にGASから受け取る。ファイルには書かない）
   };
@@ -135,6 +136,21 @@
   }
   function closeModal(id) { $(id).hidden = true; }
 
+  // すべてのモーダルに、スクロールしても常に見える×ボタンを付ける
+  $$('.modal-card').forEach(card => {
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'modal-x';
+    x.setAttribute('data-close', '');
+    x.setAttribute('aria-label', '閉じる');
+    x.textContent = '×';
+    card.prepend(x);
+  });
+  // 背景（カードの外側）をクリックしても閉じる
+  $$('.modal').forEach(m => m.addEventListener('mousedown', e => {
+    if (e.target === m && !m.classList.contains('is-forced')) m.hidden = true;
+  }));
+
   document.addEventListener('click', e => {
     const tg = e.target.closest('.pw-toggle');
     if (tg) {
@@ -165,6 +181,7 @@
     if (!audio || !audio.base64 || !S.sound) return null;
     S.audioUrl = b64ToUrl(audio.base64, audio.mime);
     S.audio = new Audio(S.audioUrl);
+    S.audio.volume = S.voiceVol;
     S.audio.play().catch(() => {});
     return S.audio;
   }
@@ -631,7 +648,12 @@
 
   /* =============================================================
    * フライト
+   *   1) Google Maps 3D（フォトリアル3D・Earth Studio風のカメラ飛行）
+   *   2) スポットに登録したフライト動画（Earth Studio書き出し等）
+   *   3) どちらも無いときは雲のアニメーション
    * ============================================================= */
+  const FL = C.FLIGHT || {};
+
   function mediaFor(url) {
     url = String(url || '').trim();
     if (!url) return null;
@@ -643,55 +665,351 @@
     return null;
   }
 
-  function renderFlightMedia(spot) {
-    const box = $('#flightMedia');
-    const md = mediaFor(spot.flight_video_url);
-    if (md?.type === 'video') {
-      box.innerHTML = `<video src="${esc(md.src)}" playsinline preload="auto"></video>`;
-      $('video', box).addEventListener('ended', enableArrive);
-    } else if (md?.type === 'iframe') {
-      box.innerHTML = `<iframe src="${esc(md.src)}" allow="autoplay; fullscreen" allowfullscreen title="フライト映像"></iframe>`;
-    } else {
-      const clouds = Array.from({ length: 5 }, (_, i) =>
-        `<span class="cloud" style="top:${10 + i * 16}%;animation-duration:${9 + i * 3}s;animation-delay:-${i * 2.5}s">☁️</span>`).join('');
-      box.innerHTML = `<div class="flight-fallback">${clouds}<span class="glider">🦅</span></div>`;
-    }
+  /* ---------- Google Maps JavaScript API（3D）の読み込み ---------- */
+  function loadMapsJs() {
+    if (window.google?.maps?.importLibrary) return Promise.resolve();
+    if (loadMapsJs.p) return loadMapsJs.p;
+    loadMapsJs.p = new Promise((resolve, reject) => {
+      window.__egfMapsReady = () => resolve();
+      window.gm_authFailure = () => { S.maps3dFailed = true; toast('Google Maps のキーが使えません（APIの有効化・リファラー制限を確認）', true); };
+      const s = document.createElement('script');
+      s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(S.mapsKey)}&v=beta&language=ja&region=JP&loading=async&callback=__egfMapsReady`;
+      s.async = true;
+      s.onerror = () => { loadMapsJs.p = null; reject(new Error('Google Maps を読み込めませんでした')); };
+      document.head.appendChild(s);
+    });
+    return loadMapsJs.p;
   }
 
+  async function create3dMap(center, cam) {
+    await loadMapsJs();
+    const { Map3DElement } = await google.maps.importLibrary('maps3d');
+    const map = new Map3DElement({
+      center: { lat: center.lat, lng: center.lng, altitude: 0 },
+      range: cam.range, tilt: cam.tilt, heading: cam.heading,
+      mode: cam.labels ? 'HYBRID' : 'SATELLITE'
+    });
+    map.defaultUIHidden = true;
+    map.defaultUIDisabled = true;
+    return map;
+  }
+
+  /* ---------- 出発地（現在地 → だめなら設定の既定地点） ---------- */
+  function getStartPoint() {
+    const fallback = FL.START || { lat: 35.6812, lng: 139.7671, name: '東京駅' };
+    if (S.startPoint) return Promise.resolve(S.startPoint);
+    if (!FL.USE_GEOLOCATION || !navigator.geolocation) return Promise.resolve(fallback);
+    return new Promise(resolve => {
+      navigator.geolocation.getCurrentPosition(
+        p => { S.startPoint = { lat: p.coords.latitude, lng: p.coords.longitude, name: '現在地' }; resolve(S.startPoint); },
+        () => resolve(fallback),
+        { timeout: 5000, maximumAge: 600000 }
+      );
+    });
+  }
+
+  const rad = d => d * Math.PI / 180;
+  function distKm(a, b) {
+    const R = 6371, dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+  function bearing(a, b) {
+    const y = Math.sin(rad(b.lng - a.lng)) * Math.cos(rad(b.lat));
+    const x = Math.cos(rad(a.lat)) * Math.sin(rad(b.lat)) - Math.sin(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.cos(rad(b.lng - a.lng));
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+  }
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const fmtTime = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+
+  /* ---------- 風の効果音 ---------- */
+  const Wind = {
+    src: null, gain: null,
+    start() {
+      this.stop();
+      const c = Music.ensure();
+      const len = c.sampleRate * 2;
+      const buf = c.createBuffer(1, len, c.sampleRate);
+      const d = buf.getChannelData(0);
+      let last = 0;
+      for (let i = 0; i < len; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = last * 3.5; }
+      this.src = c.createBufferSource(); this.src.buffer = buf; this.src.loop = true;
+      const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 900;
+      this.gain = c.createGain(); this.set(S.seVol);
+      this.src.connect(f).connect(this.gain).connect(c.destination);
+      this.src.start();
+    },
+    set(v) { if (this.gain) this.gain.gain.value = S.sound ? v * 0.5 : 0; },
+    stop() { try { this.src?.stop(); } catch { /* 停止済み */ } this.src = null; this.gain = null; },
+    whoosh() {
+      if (!S.sound || !S.seVol) return;
+      const c = Music.ensure(), t = c.currentTime;
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = 'sawtooth'; o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(60, t + 0.6);
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.06 * S.seVol, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+      o.connect(g).connect(c.destination); o.start(t); o.stop(t + 0.8);
+    }
+  };
+
+  /* ---------- 隊長の吹き出し・字幕 ---------- */
+  function eagleSay(text) {
+    const b = $('#eagleBubble');
+    b.textContent = text || '';
+    b.hidden = !text;
+    $('#flightSub').textContent = text || '';
+  }
+
+  /* ---------- フライト開始（準備） ---------- */
   async function startFlight(spot, { mystery = false } = {}) {
     if (!spot) return;
     stopVoice();
-    S.flight = { spot, mystery, script: '', audioData: null, guess: null, subTimer: null };
+    const F = S.flight = {
+      spot, mystery, script: '', audioData: null, guess: null,
+      kind: 'fallback', map: null, phases: [], idx: -1, runId: 0, phaseStart: 0,
+      paused: false, remaining: 0, landReady: false, tick: null, subTimer: null, sentences: [], sentIdx: -1
+    };
     const v = $('#flightView');
     v.hidden = false;
     v.classList.toggle('is-mystery', mystery);
     $('#revealBox').hidden = true;
     $('#flightDest').textContent = mystery ? '行き先：？？？（ミステリーフライト）' : `行き先：${spot.name}`;
-    $('#flightSub').textContent = '';
+    eagleSay('');
     $('#btnTakeoff').hidden = true;
-    $('#btnArrive').disabled = true;
+    $('#flightCtrl').hidden = true;
     $('#mysteryBox').hidden = true;
-    renderFlightMedia(spot);
+    $('#btnPause').textContent = '一時停止';
+    setLandPill('準備中', false);
     setFlightStatus('イーグル隊長が飛行計画を立てておる…');
 
-    const f = S.flight;
-    try {
-      const r = await api('narration', { spot_id: spot.spot_id, mode: mystery ? 'mystery' : 'flight' });
-      if (S.flight !== f) return;
-      f.script = r.script || '';
-      f.audioData = r.audio || null;
-      if (r.audioError) toast('音声を作れなかったので、字幕だけで案内します', true);
-      setFlightStatus('準備完了！「出発！」で飛び立つぞ');
-    } catch (err) {
-      if (S.flight !== f) return;
-      setFlightStatus('案内の準備に失敗しました。音声なしで飛べます');
-    }
+    const narr = api('narration', { spot_id: spot.spot_id, mode: mystery ? 'mystery' : 'flight' })
+      .catch(() => ({ script: '', audioError: true }));
+    const media = prepareFlightMedia(F);
+    const [r] = await Promise.all([narr, media]);
+    if (S.flight !== F) return;
+    F.script = r.script || '';
+    F.audioData = r.audio || null;
+    F.sentences = (F.script.match(/[^。！？!?]+[。！？!?]?/g) || []).map(s => s.trim()).filter(Boolean);
+    if (r.audioError) toast('音声を作れなかったので、字幕だけで案内します', true);
     if (mystery) renderGuess(spot);
+    eagleSay(mystery ? 'さあ、行き先は秘密じゃ。ヒントをよく聞いておれ！' : `よし、翼の調子は上々じゃ。「${spot.name}」へ出発するぞ！`);
+    setFlightStatus('');
     $('#btnTakeoff').hidden = false;
     $('#btnTakeoff').focus();
   }
 
+  async function prepareFlightMedia(F) {
+    const box = $('#flightMedia');
+    box.innerHTML = '';
+    const spot = F.spot;
+    const prefer3d = (FL.PREFER || 'map3d') === 'map3d';
+    const video = mediaFor(spot.flight_video_url);
+
+    if (S.mapsKey && validCoord(spot) && !S.maps3dFailed && (prefer3d || !video)) {
+      try {
+        F.from = await getStartPoint();
+        F.to = { lat: spot.lat, lng: spot.lng };
+        F.dist = distKm(F.from, F.to);
+        F.heading = F.dist > 0.3 ? bearing(F.from, F.to) : 0;
+        F.map = await create3dMap(F.from, { range: 1500, tilt: 65, heading: F.heading, labels: !F.mystery });
+        if (S.flight !== F) return;
+        box.appendChild(F.map);
+        F.kind = 'map3d';
+        F.phases = buildPhases(F);
+        F.map.addEventListener('gmp-animationend', () => {
+          if (performance.now() - F.phaseStart > 400) advancePhase(F, F.runId);
+        });
+        return;
+      } catch (e) {
+        console.warn(e);
+        toast('3Dマップを表示できないため、通常の映像で飛びます', true);
+      }
+    }
+    if (video?.type === 'video') {
+      box.innerHTML = `<video src="${esc(video.src)}" playsinline preload="auto"></video>`;
+      $('video', box).addEventListener('ended', () => readyToLand(F));
+      F.kind = 'video';
+    } else if (video?.type === 'iframe') {
+      box.innerHTML = `<iframe src="${esc(video.src)}" allow="autoplay; fullscreen" allowfullscreen title="フライト映像"></iframe>`;
+      F.kind = 'iframe';
+    } else {
+      const clouds = Array.from({ length: 5 }, (_, i) =>
+        `<span class="cloud" style="top:${10 + i * 16}%;animation-duration:${9 + i * 3}s;animation-delay:-${i * 2.5}s">☁️</span>`).join('');
+      box.innerHTML = `<div class="flight-fallback">${clouds}</div>`;
+      F.kind = 'fallback';
+    }
+  }
+
+  /* ---------- 3Dカメラの飛行計画 ---------- */
+  function buildPhases(F) {
+    const { from, to, dist, heading, map } = F;
+    const fly = (center, range, tilt, hd, ms) => map.flyCameraTo({
+      endCamera: { center: { lat: center.lat, lng: center.lng, altitude: 0 }, range, tilt, heading: hd },
+      durationMillis: ms
+    });
+    const ph = [];
+    ph.push({ dur: 5000, line: 'しっかりつかまっておれ！ 離陸じゃ！', run: ms => { if (ms === 5000) Wind.whoosh(); fly(from, 5000, 55, heading, ms); } });
+    if (dist > 2) {
+      const mid = { lat: (from.lat + to.lat) / 2, lng: (from.lng + to.lng) / 2 };
+      const cruiseRange = clamp(dist * 1000 * 1.1, 15000, 900000);
+      const cruiseMs = clamp(8000 + dist * 25, 9000, 24000);
+      ph.push({ dur: cruiseMs, line: '高度を上げるぞ。下の景色を見てみるのじゃ！', run: ms => fly(mid, cruiseRange, 35, heading, ms) });
+    }
+    ph.push({ dur: 9000, line: F.mystery ? 'そろそろ高度を下げるぞ。どこか分かったかの？' : `見えてきたぞ、「${F.spot.name}」じゃ！`, run: ms => fly(to, 1400, 65, heading, ms) });
+    ph.push({
+      dur: 0, final: true, line: F.mystery ? 'さあ、着陸じゃ！ 答えは決まったかの？' : '到着じゃ！ 上空をひと回りしてから着陸するぞ',
+      run: () => map.flyCameraAround({
+        camera: { center: { lat: to.lat, lng: to.lng, altitude: 0 }, range: 1400, tilt: 65, heading },
+        durationMillis: 40000, repeatCount: 1, rounds: 1
+      })
+    });
+    return ph;
+  }
+
+  function runPhase(F, i, resume = false) {
+    if (S.flight !== F) return;
+    const ph = F.phases[i];
+    if (!ph) return;
+    // 再開時は区間の残り時間だけで飛ぶ
+    const ms = resume ? Math.max(1500, ph.dur - (F.phaseElapsed || 0)) : ph.dur;
+    F.idx = i;
+    F.runId++;
+    F.phaseStart = performance.now() - (resume ? ph.dur - ms : 0);
+    const id = F.runId;
+    ph.run(ms);
+    if (!resume) {
+      // 音声が無いときは区切りのセリフを吹き出しに
+      if (!F.audio) eagleSay(ph.line);
+      F.remaining = F.phases.slice(i).filter(p => !p.final).reduce((a, p) => a + p.dur, 0);
+    }
+    if (ph.final) readyToLand(F);
+    else setTimeout(() => advancePhase(F, id), ms + 1500); // イベントが来なかったときの保険
+  }
+
+  function advancePhase(F, id) {
+    if (S.flight !== F || F.paused || id !== F.runId) return;
+    if (F.phases[F.idx]?.final) return;
+    runPhase(F, F.idx + 1);
+  }
+
+  /* ---------- 離陸 ---------- */
+  function takeoff() {
+    const F = S.flight;
+    if (!F) return;
+    Music.ensure();
+    $('#btnTakeoff').hidden = true;
+    $('#flightCtrl').hidden = false;
+    $('#eagleRig').classList.add('is-flying');
+    Wind.start();
+
+    const vid = $('#flightMedia video');
+    if (vid) vid.play().catch(() => {});
+
+    F.audio = playVoice(F.audioData);
+    if (F.audio) {
+      F.audio.addEventListener('timeupdate', () => syncSentence(F));
+      F.audio.addEventListener('ended', () => { if (F.kind !== 'map3d') readyToLand(F); });
+    } else if (F.kind !== 'map3d') {
+      timedSentences(F);
+    }
+
+    if (F.kind === 'map3d') {
+      runPhase(F, 0);
+    } else {
+      F.remaining = C.ARRIVE_FALLBACK_MS;
+    }
+
+    let last = performance.now();
+    F.tick = setInterval(() => {
+      const now = performance.now();
+      if (!F.paused && !F.landReady) {
+        F.remaining -= now - last;
+        if (F.kind !== 'map3d' && F.remaining <= 0) readyToLand(F);
+        setLandPill(`着陸まで ${fmtTime(F.remaining)}`, false);
+      }
+      last = now;
+    }, 250);
+  }
+
+  function syncSentence(F) {
+    const a = F.audio;
+    if (!a || !a.duration || !isFinite(a.duration) || !F.sentences.length) return;
+    const total = F.sentences.reduce((n, s) => n + s.length, 0);
+    const pos = a.currentTime / a.duration * total;
+    let acc = 0;
+    for (let i = 0; i < F.sentences.length; i++) {
+      acc += F.sentences[i].length;
+      if (pos <= acc) { if (F.sentIdx !== i) { F.sentIdx = i; eagleSay(F.sentences[i]); } break; }
+    }
+  }
+
+  function timedSentences(F) {
+    let i = 0;
+    const next = () => {
+      if (S.flight !== F) return;
+      if (F.paused) { F.subTimer = setTimeout(next, 500); return; }
+      if (i >= F.sentences.length) return;
+      eagleSay(F.sentences[i]);
+      F.subTimer = setTimeout(next, Math.max(2400, F.sentences[i].length * 170));
+      i++;
+    };
+    next();
+  }
+
+  function readyToLand(F) {
+    if (S.flight !== F || F.landReady) return;
+    F.landReady = true;
+    setLandPill('着陸する', true);
+    setFlightStatus(F.mystery ? '答えを選んだら「着陸する」を押すのじゃ' : '「着陸する」で現地広場へ降りるぞ');
+  }
+
+  function setLandPill(text, enabled) {
+    const b = $('#btnArrive');
+    b.textContent = text;
+    b.disabled = !enabled;
+    b.classList.toggle('is-ready', enabled);
+  }
+
   function setFlightStatus(t) { $('#flightStatus').textContent = t; }
+
+  /* ---------- 一時停止・次へ ---------- */
+  function togglePause() {
+    const F = S.flight;
+    if (!F) return;
+    F.paused = !F.paused;
+    $('#btnPause').textContent = F.paused ? '再開' : '一時停止';
+    $('#eagleRig').classList.toggle('is-paused', F.paused);
+    const vid = $('#flightMedia video');
+    if (F.paused) {
+      F.audio?.pause();
+      vid?.pause();
+      Wind.set(0);
+      if (F.map) { F.phaseElapsed = performance.now() - F.phaseStart; F.map.stopCameraAnimation?.(); }
+    } else {
+      F.audio?.play().catch(() => {});
+      vid?.play().catch(() => {});
+      Wind.set(S.seVol);
+      if (F.map && F.idx >= 0) runPhase(F, F.idx, true); // 今の区間の続きを現在の視点から
+    }
+  }
+
+  function nextStep() {
+    const F = S.flight;
+    if (!F) return;
+    if (F.paused) togglePause();
+    if (F.kind === 'map3d') {
+      if (F.phases[F.idx]?.final) return;
+      F.map.stopCameraAnimation?.();
+      runPhase(F, F.idx + 1);
+    } else {
+      readyToLand(F);
+    }
+    // 案内の音声も次の文へ
+    if (F.audio && F.audio.duration && F.sentences.length) {
+      const total = F.sentences.reduce((n, s) => n + s.length, 0);
+      const upto = F.sentences.slice(0, Math.min(F.sentIdx + 1, F.sentences.length)).reduce((n, s) => n + s.length, 0);
+      F.audio.currentTime = Math.min(F.audio.duration - 0.1, upto / total * F.audio.duration + 0.05);
+    }
+  }
 
   function renderGuess(spot) {
     const others = shuffle(S.spots.filter(s => s.spot_id !== spot.spot_id)).slice(0, 3);
@@ -700,70 +1018,39 @@
     $('#mysteryBox').hidden = false;
   }
 
-  function takeoff() {
-    const f = S.flight;
-    if (!f) return;
-    Music.ensure();
-    $('#btnTakeoff').hidden = true;
-    setFlightStatus('飛行中… しっかりつかまっておれ！');
-    const vid = $('#flightMedia video');
-    if (vid) vid.play().catch(() => {});
-    const audio = playVoice(f.audioData);
-    const sentences = (f.script.match(/[^。！？!?]+[。！？!?]?/g) || []).map(s => s.trim()).filter(Boolean);
-    const total = sentences.reduce((a, s) => a + s.length, 0) || 1;
-    const sub = $('#flightSub');
-
-    if (audio) {
-      const onTime = () => {
-        if (!audio.duration || !isFinite(audio.duration)) return;
-        const pos = audio.currentTime / audio.duration * total;
-        let acc = 0;
-        for (const s of sentences) { acc += s.length; if (pos <= acc) { sub.textContent = s; break; } }
-      };
-      audio.addEventListener('timeupdate', onTime);
-      audio.addEventListener('ended', () => { sub.textContent = ''; enableArrive(); });
-    } else if (sentences.length) {
-      let i = 0;
-      const next = () => {
-        if (!S.flight || i >= sentences.length) { sub.textContent = ''; enableArrive(); return; }
-        sub.textContent = sentences[i];
-        f.subTimer = setTimeout(next, Math.max(2200, sentences[i].length * 160));
-        i++;
-      };
-      next();
-    }
-    setTimeout(enableArrive, C.ARRIVE_FALLBACK_MS);
-  }
-
-  function enableArrive() {
-    if (!S.flight) return;
-    $('#btnArrive').disabled = false;
-    setFlightStatus(S.flight.mystery ? 'まもなく着陸じゃ！ 答えは決まったかの？' : 'まもなく到着じゃ！ 着陸準備！');
-  }
-
+  /* ---------- 着陸・終了 ---------- */
   async function arrive() {
-    const f = S.flight;
-    if (!f) return;
+    const F = S.flight;
+    if (!F || !F.landReady) return;
     stopVoice();
-    clearTimeout(f.subTimer);
-    $('#flightMedia').innerHTML = '';
-    if (f.mystery) {
-      const ok = f.guess === f.spot.spot_id;
+    Wind.stop();
+    clearInterval(F.tick);
+    clearTimeout(F.subTimer);
+    F.map?.stopCameraAnimation?.();
+    if (F.mystery) {
+      const ok = F.guess === F.spot.spot_id;
       const box = $('#revealBox');
-      box.innerHTML = `<div><p>行き先は…</p><h2>${esc(f.spot.name)}</h2>
-        <p>${f.guess ? (ok ? '🎯 大正解じゃ！さすが隊員諸君！' : 'おしい！ でも楽しい旅じゃったろう？') : 'さあ、着陸じゃ！'}</p></div>`;
+      box.innerHTML = `<div><p>行き先は…</p><h2>${esc(F.spot.name)}</h2>
+        <p>${F.guess ? (ok ? '🎯 大正解じゃ！さすが隊員諸君！' : 'おしい！ でも楽しい旅じゃったろう？') : 'さあ、着陸じゃ！'}</p></div>`;
       box.hidden = false;
       Music.chime();
       await sleep(reducedMotion ? 600 : 2600);
     }
     closeFlight();
-    enterPlaza(f.spot);
+    enterPlaza(F.spot);
   }
 
   function closeFlight() {
-    if (S.flight) clearTimeout(S.flight.subTimer);
+    const F = S.flight;
+    if (F) {
+      clearInterval(F.tick);
+      clearTimeout(F.subTimer);
+      F.map?.stopCameraAnimation?.();
+    }
     S.flight = null;
     stopVoice();
+    Wind.stop();
+    $('#eagleRig').classList.remove('is-flying', 'is-paused');
     $('#flightMedia').innerHTML = '';
     $('#flightView').hidden = true;
   }
@@ -772,6 +1059,16 @@
     $('#btnTakeoff').addEventListener('click', takeoff);
     $('#btnArrive').addEventListener('click', arrive);
     $('#btnAbort').addEventListener('click', () => { closeFlight(); toast('引き返しました'); });
+    $('#btnPause').addEventListener('click', togglePause);
+    $('#btnNext').addEventListener('click', nextStep);
+    $('#volVoice').addEventListener('input', e => {
+      S.voiceVol = Number(e.target.value);
+      if (S.audio) S.audio.volume = S.voiceVol;
+    });
+    $('#volSe').addEventListener('input', e => {
+      S.seVol = Number(e.target.value);
+      Wind.set(S.flight?.paused ? 0 : S.seVol);
+    });
     $('#guessChoices').addEventListener('click', e => {
       const b = e.target.closest('[data-guess]');
       if (!b || !S.flight) return;
@@ -788,7 +1085,8 @@
     showView('plaza');
     const P = S.plaza = {
       spot, me: null, since: 0, seen: new Set(), timers: [],
-      members: new Map(), polling: false, moveTimer: null
+      members: new Map(), polling: false, moveTimer: null,
+      calls: [], bgCache: {}, bgImg: null, bgKind: null
     };
     $('#plazaName').textContent = `${catOf(spot.category).emoji} ${spot.name}`;
     $('#plazaCount').textContent = '合流中…';
@@ -806,6 +1104,7 @@
     $('#chatLog').innerHTML = '';
     $('#plazaCaptainText').textContent = '';
     C.NPCS.forEach(n => upsertAvatar({ id: 'npc:' + n.id, nickname: n.name, avatar: n.emoji, x: n.x, y: n.y }, 'npc'));
+    renderCalls([]);
 
     const pos = { x: 20 + Math.random() * 60, y: 62 + Math.random() * 26 };
     try {
@@ -843,6 +1142,7 @@
     const P = S.plaza;
     if (!P) return;
     renderMembers(r.members || []);
+    if (r.calls) renderCalls(r.calls);
     (r.logs || []).forEach(handleLog);
   }
 
@@ -915,6 +1215,14 @@
         break;
       case 'action':
         if (!mine) { doAction(log.member, p.id, p.song); chatLine(null, `${log.nickname}さん：${actionLabel(p.id)}`); }
+        break;
+      case 'call':
+        if (!mine) {
+          chatLine(null, p.state === 'ended'
+            ? `${log.nickname}さんの${p.name || svcOf(p.service).name}通話が終了しました`
+            : `📹 ${log.nickname}さんが${p.name || svcOf(p.service).name}で通話を始めました（「参加」から入れます）`);
+          if (p.state !== 'ended') { Music.chime(); bubble(log.member, '📹 通話しよう！'); }
+        }
         break;
       case 'npc':
         chatLine(log.nickname, p.text, 'npc');
@@ -1002,6 +1310,7 @@
     P.timers.forEach(t => { clearInterval(t); clearTimeout(t); });
     clearTimeout(P.moveTimer);
     $('#stageSv').innerHTML = '';
+    closeModal('#callModal');
     Music.bgmStop();
     $('#btnBgm').setAttribute('aria-pressed', 'false');
     stopVoice();
@@ -1086,6 +1395,222 @@
       if (!P) return;
       navigator.sendBeacon?.(gasUrl(), new Blob([JSON.stringify({ action: 'plazaLeave', token: S.token, spot_id: P.spot.spot_id })], { type: 'text/plain' }));
     });
+  }
+
+  /* =============================================================
+   * 現地ビデオ通話（Meet / Zoom / LINE / Messenger）＋ 現地背景画像
+   * ============================================================= */
+  const svcOf = id => (C.CALL_SERVICES || {})[id] || { name: id, icon: '📹' };
+  const timeAgo = ts => { const m = Math.floor((Date.now() - ts) / 60000); return m < 1 ? 'たった今' : m < 60 ? `${m}分前` : `${Math.floor(m / 60)}時間前`; };
+
+  function renderCalls(list) {
+    const P = S.plaza;
+    if (!P) return;
+    P.calls = list || [];
+    // 広場の右上に常に見える通話バー
+    const bar = $('#callBar');
+    if (!P.calls.length) {
+      bar.innerHTML = '<button type="button" class="call-start" data-call-open>📹 現地でビデオ通話を始める</button>';
+    } else {
+      bar.innerHTML = `<p class="call-live">📹 現地で${P.calls.length}件の通話中</p>` +
+        P.calls.slice(0, 2).map(c => `
+          <div class="call-item">
+            <span class="call-svc">${svcOf(c.service).icon} ${esc(c.serviceName)}</span>
+            <span class="call-title">${esc(c.title)}</span>
+            <button type="button" class="btn btn-primary btn-sm" data-call-join="${esc(c.id)}">参加</button>
+          </div>`).join('') +
+        '<button type="button" class="call-more" data-call-open>背景をつくる・通話を始める</button>';
+    }
+    // モーダル内の一覧
+    $('#callList').innerHTML = P.calls.length ? P.calls.map(c => `
+      <li class="call-row">
+        <span class="call-svc">${svcOf(c.service).icon} ${esc(c.serviceName)}</span>
+        <span class="call-main"><strong>${esc(c.title)}</strong><small>${esc(c.nickname)}さん　${timeAgo(c.createdAt)}</small></span>
+        <button type="button" class="btn btn-primary btn-sm" data-call-join="${esc(c.id)}">参加する</button>
+        ${c.mine ? `<button type="button" class="btn btn-ghost btn-sm" data-call-end="${esc(c.id)}">終了</button>` : ''}
+      </li>`).join('') : '<li class="empty">まだ通話はありません。下の手順で始めてみましょう</li>';
+  }
+
+  function joinCall(id) {
+    const c = S.plaza?.calls?.find(x => x.id === id);
+    if (!c) return;
+    window.open(c.url, '_blank', 'noopener');
+    toast(`${c.serviceName}を開きました。現地の背景を設定して入りましょう`);
+  }
+
+  function openCallModal() {
+    const P = S.plaza;
+    if (!P) return;
+    $('#svcGrid').innerHTML = Object.entries(C.CALL_SERVICES || {}).map(([id, s]) => `
+      <div class="svc-card">
+        <a class="btn btn-outline btn-sm" href="${esc(s.open)}" target="_blank" rel="noopener">${s.icon} ${esc(s.name)}を開く</a>
+        <small>${esc(s.how)}</small>
+      </div>`).join('');
+    const kinds = [
+      { k: 'street', h: 0, label: 'ストリートビュー（北）' },
+      { k: 'street', h: 90, label: '東' },
+      { k: 'street', h: 180, label: '南' },
+      { k: 'street', h: 270, label: '西' },
+      { k: 'aerial', h: 0, label: '航空写真' },
+      ...(P.spot.image_url ? [{ k: 'photo', h: 0, label: '登録写真' }] : []),
+      { k: 'scene', h: 0, label: '現地のイラスト' }
+    ];
+    $('#bgKinds').innerHTML = kinds.map((o, i) =>
+      `<button type="button" class="chip${i === 0 ? ' is-on' : ''}" data-bg="${o.k}" data-h="${o.h}">${esc(o.label)}</button>`).join('');
+    renderCalls(P.calls);
+    openModal('#callModal');
+    loadBg('street', 0);
+  }
+
+  async function loadBg(kind, heading) {
+    const P = S.plaza;
+    if (!P) return;
+    P.bgCache = P.bgCache || {};
+    P.bgKind = { kind, heading };
+    const key = kind + heading;
+    const msg = $('#bgMsg');
+    msg.hidden = true;
+    if (kind === 'scene') { P.bgImg = null; drawBg(); return; }
+    if (P.bgCache[key]) { P.bgImg = P.bgCache[key]; drawBg(); return; }
+    msg.textContent = '現地の画像を取り寄せています…';
+    msg.hidden = false;
+    try {
+      const r = await api('callBackground', { spot_id: P.spot.spot_id, kind, heading });
+      const img = new Image();
+      await new Promise((ok, ng) => { img.onload = ok; img.onerror = ng; img.src = `data:${r.mime};base64,${r.base64}`; });
+      if (S.plaza !== P || P.bgKind.kind + P.bgKind.heading !== key) return;
+      P.bgCache[key] = img;
+      P.bgImg = img;
+      msg.hidden = true;
+      drawBg();
+    } catch (err) {
+      if (S.plaza !== P) return;
+      msg.textContent = `${err.message || '画像を取得できませんでした'}（いまは現地のイラストを表示しています）`;
+      P.bgImg = null;
+      drawBg();
+    }
+  }
+
+  const SCENE_COLORS = {
+    bbq:    { sky: ['#7cc0f2', '#bfe1f7', '#f7e2b5'], ground: '#5f9f4f' },
+    stage:  { sky: ['#2b1f55', '#7a3f7f', '#f08a5d'], ground: '#4b3a2c' },
+    sight:  { sky: ['#6fb3ea', '#cde6f8', '#eef6fb'], ground: '#c9b48c' },
+    nature: { sky: ['#8fd0f0', '#cfeee0', '#e2f3e0'], ground: '#4f8f45' },
+    night:  { sky: ['#0b1d3a', '#1a3460', '#23406e'], ground: '#222d3d' }
+  };
+
+  function drawBg() {
+    const P = S.plaza;
+    if (!P) return;
+    const cv = $('#bgCanvas');
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+
+    if (P.bgImg) {
+      // 画面いっぱいに切り抜いて配置（少しだけ彩度を上げる）
+      const img = P.bgImg;
+      const sc = Math.max(W / img.width, H / img.height);
+      const w = img.width * sc, h = img.height * sc;
+      ctx.filter = 'saturate(1.1)';
+      ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+      ctx.filter = 'none';
+    } else {
+      const cat = catOf(P.spot.category);
+      const sc = SCENE_COLORS[cat.scene] || SCENE_COLORS.sight;
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      sc.sky.forEach((c, i) => g.addColorStop(i / (sc.sky.length - 1), c));
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      if (cat.scene === 'night') {
+        ctx.fillStyle = '#fff';
+        for (let i = 0; i < 140; i++) { ctx.globalAlpha = Math.random() * .8 + .2; ctx.fillRect(Math.random() * W, Math.random() * H * .55, 2.5, 2.5); }
+        ctx.globalAlpha = 1;
+      }
+      ctx.fillStyle = sc.ground;
+      ctx.beginPath(); ctx.moveTo(0, H * .62);
+      ctx.quadraticCurveTo(W / 2, H * .5, W, H * .62); ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.fill();
+      ctx.font = '260px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(cat.prop, W * .78, H * .6);
+    }
+
+    if ($('#bgLabel').checked) {
+      // 場所名の札（顔にかぶりにくい左下）
+      const grd = ctx.createLinearGradient(0, H * .7, 0, H);
+      grd.addColorStop(0, 'rgba(0,0,0,0)'); grd.addColorStop(1, 'rgba(0,0,0,.45)');
+      ctx.fillStyle = grd; ctx.fillRect(0, H * .7, W, H * .3);
+      const name = P.spot.name;
+      ctx.font = '800 64px "M PLUS Rounded 1c", sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      const tw = Math.min(ctx.measureText(`📍 ${name}`).width, W * .6);
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
+      roundRect(ctx, 56, H - 196, tw + 80, 104, 52); ctx.fill();
+      ctx.fillStyle = '#163A63';
+      ctx.fillText(`📍 ${name}`, 96, H - 124, W * .6);
+      ctx.font = '700 34px "M PLUS Rounded 1c", sans-serif';
+      ctx.fillStyle = '#fff';
+      ctx.fillText('🦅 現地集合フライトで集合中', 72, H - 44);
+    }
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+
+  async function saveBg() {
+    const P = S.plaza;
+    if (!P) return;
+    const blob = await new Promise(r => $('#bgCanvas').toBlob(r, 'image/jpeg', 0.92));
+    const name = `${P.spot.name}_通話背景.jpg`.replace(/[\\/:*?"<>|]/g, '');
+    const file = new File([blob], name, { type: 'image/jpeg' });
+    // スマホは共有シートから「画像を保存」
+    if (navigator.canShare?.({ files: [file] }) && matchMedia('(pointer: coarse)').matches) {
+      try { await navigator.share({ files: [file], title: name }); return; } catch { /* キャンセル時はダウンロードへ */ }
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+    toast('背景画像を保存しました。通話アプリの背景に設定してください');
+  }
+
+  function initCall() {
+    $('#btnCall').addEventListener('click', openCallModal);
+    document.addEventListener('click', e => {
+      if (e.target.closest('[data-call-open]')) { openCallModal(); return; }
+      const j = e.target.closest('[data-call-join]');
+      if (j) { joinCall(j.dataset.callJoin); return; }
+      const en = e.target.closest('[data-call-end]');
+      if (en) {
+        if (!confirm('この通話の掲示を終了しますか？（通話アプリ側の通話は各アプリで終了してください）')) return;
+        busyButton(en, async () => {
+          try { const r = await api('callEnd', { id: en.dataset.callEnd }); renderCalls(r.calls); toast(r.message); }
+          catch (err) { toast(err.message, true); }
+        });
+      }
+    });
+    $('#bgKinds').addEventListener('click', e => {
+      const b = e.target.closest('[data-bg]');
+      if (!b) return;
+      $$('#bgKinds .chip').forEach(x => x.classList.toggle('is-on', x === b));
+      loadBg(b.dataset.bg, Number(b.dataset.h));
+    });
+    $('#bgLabel').addEventListener('change', drawBg);
+    $('#btnBgSave').addEventListener('click', e => busyButton(e.currentTarget, saveBg));
+    $('#btnCallPost').addEventListener('click', e => busyButton(e.currentTarget, async () => {
+      const P = S.plaza;
+      const url = $('#callUrl').value.trim();
+      if (!P || !url) { toast('通話のリンクを貼り付けてください', true); return; }
+      try {
+        const r = await api('callPost', { spot_id: P.spot.spot_id, url, title: $('#callName').value.trim() });
+        renderCalls(r.calls);
+        $('#callUrl').value = ''; $('#callName').value = '';
+        chatLine(null, 'あなたが現地に通話を掲示しました');
+        toast(r.message);
+      } catch (err) { toast(err.message, true); }
+    }));
   }
 
   /* =============================================================
@@ -1257,6 +1782,8 @@
   }
   function gasUrl() { return storedGasUrl() || C.GAS_URL || ''; }
   const isValidGasUrl = u => /^https:\/\/script\.google(usercontent)?\.com\/.+\/exec(\?.*)?$/.test(String(u || '').trim());
+  // 画面だけの修正（v1.3.0→v1.3.1 など）では警告しないよう、メジャー・マイナーで比較
+  const sameMinor = (a, b) => String(a || '').split('.').slice(0, 2).join('.') === String(b || '').split('.').slice(0, 2).join('.');
   const isGasConfigured = () => isValidGasUrl(gasUrl()) && !gasUrl().includes('XXXX');
 
   // サーバー情報（doGet）を取得
@@ -1292,7 +1819,7 @@
       ok: ['ok', `サーバー ${sv.version || ''}`]
     };
     const [cls, label] = map[sv.state] || map.checking;
-    const warn = sv.state === 'ok' && sv.version && sv.version !== C.VERSION ? '（版が異なります）' : '';
+    const warn = sv.state === 'ok' && sv.version && !sameMinor(sv.version, C.VERSION) ? '（版が異なります）' : '';
     bar.innerHTML = `<span class="dot ${cls}"></span>${esc(base)}　${esc(label + warn)}`;
     bar.setAttribute('aria-label', `バージョン情報と設定を開く：${base}、${label}`);
   }
@@ -1304,7 +1831,7 @@
       checking: '確認中…', unset: '未設定', ng: '接続できません',
       ok: `接続OK（応答 ${sv.ms ?? '-'}ms）`
     }[sv.state] || '確認中…';
-    const mismatch = sv.state === 'ok' && sv.version && sv.version !== C.VERSION;
+    const mismatch = sv.state === 'ok' && sv.version && !sameMinor(sv.version, C.VERSION);
     $('#versionInfo').innerHTML = `
       <table class="info-tbl">
         <tr><th>アプリ</th><td>${esc(C.APP_NAME)}</td></tr>
@@ -1356,7 +1883,7 @@
       setGasMsg('接続を確認しています…');
       const r = await fetchServerInfo(url);
       if (r.state === 'ok') {
-        const mm = r.version && r.version !== C.VERSION ? `（画面は ${C.VERSION}。版が異なります）` : '';
+        const mm = r.version && !sameMinor(r.version, C.VERSION) ? `（画面は ${C.VERSION}。版が異なります）` : '';
         setGasMsg(`接続OK：${r.app || ''} ${r.version || ''}（Build ${r.build || '-'}）${r.ms}ms ${mm}`, mm ? 'warn' : 'ok');
       } else {
         setGasMsg('接続できませんでした。URL、デプロイのアクセス権（全員）、新バージョンでのデプロイを確認してください', 'error');
@@ -1404,6 +1931,7 @@
     initFlight();
     initPlaza();
     initAdmin();
+    initCall();
     initSettings();
     renderVersion();
 

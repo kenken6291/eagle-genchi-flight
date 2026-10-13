@@ -6,7 +6,9 @@
  * ■ スクリプトプロパティ（プロジェクトの設定 → スクリプト プロパティ）
  *   GEMINI_API_KEY   : 必須  Gemini APIキー
  *   ※ Googleマップのリンク解析は組み込みの Maps サービス（キー不要）を使用
- *   GOOGLE_MAPS_API_KEY : 任意  Google Maps APIキー（Maps Embed API。ログイン済み会員にのみ返す）
+ *   GOOGLE_MAPS_API_KEY : 任意  Google Maps APIキー（ブラウザ用。ログイン済み会員にのみ返す）
+ *   GOOGLE_MAPS_SERVER_KEY : 任意  サーバー用キー（Street View Static API / Maps Static API。
+ *                         ビデオ通話の背景画像をGASで取得するのに使用。リファラー制限なし・API制限あり）
  *   GEMINI_MODEL     : 任意  既定 gemini-2.5-flash
  *   TTS_MODEL        : 任意  既定 gemini-2.5-flash-preview-tts
  *   TTS_VOICE        : 任意  既定 Puck
@@ -21,7 +23,7 @@
  * ■ コード変更後は「デプロイを管理 → 編集 → 新バージョン」で再デプロイが必要
  ******************************************************************/
 
-const APP = { NAME: '現地集合フライト', VERSION: 'v1.3.0', BUILD: '20261013' };
+const APP = { NAME: '現地集合フライト', VERSION: 'v1.5.0', BUILD: '20261013' };
 
 const SHEET_DEF = {
   Users: ['email', 'nickname', 'salt', 'hash', 'mustChange', 'role', 'status',
@@ -30,7 +32,8 @@ const SHEET_DEF = {
           'flight_video_url', 'activity_tags', 'image_url', 'source', 'createdAt', 'updatedAt',
           'address', 'maps_url'],
   ActivityLogs: ['id', 'ts', 'spot_id', 'email', 'nickname', 'type', 'payload'],
-  Presence: ['key', 'spot_id', 'email', 'nickname', 'avatar', 'x', 'y', 'lastSeen']
+  Presence: ['key', 'spot_id', 'email', 'nickname', 'avatar', 'x', 'y', 'lastSeen'],
+  Calls: ['id', 'spot_id', 'service', 'url', 'title', 'email', 'nickname', 'createdAt', 'expiresAt', 'status']
 };
 
 const CATEGORIES = ['BBQ', '音楽', '観光', '自然', 'グルメ', '夜景', 'その他'];
@@ -105,7 +108,11 @@ const ROUTES = {
   plazaPoll: plazaPoll_,
   plazaPost: plazaPost_,
   plazaLeave: plazaLeave_,
-  npcTick: npcTick_
+  npcTick: npcTick_,
+  // ビデオ通話
+  callPost: callPost_,
+  callEnd: callEnd_,
+  callBackground: callBackground_
 };
 
 /* =================================================================
@@ -695,6 +702,7 @@ function plazaJoin_(req) {
     me: memberId_(u.email),
     members: members_(spotId),
     logs: recentLogs_(spotId, Date.now() - 30 * 60000, 30),
+    calls: calls_(spotId, u),
     serverTs: Date.now()
   };
 }
@@ -708,7 +716,7 @@ function plazaPoll_(req) {
   if (!mine || Date.now() - Number(mine.lastSeen) > 15000) {
     withLock_(() => touchPresence_(u, spotId, null, false));
   }
-  return { members: members_(spotId), logs: recentLogs_(spotId, since, 60), serverTs: Date.now() };
+  return { members: members_(spotId), logs: recentLogs_(spotId, since, 60), calls: calls_(spotId, u), serverTs: Date.now() };
 }
 
 /** type: chat / action / move */
@@ -774,6 +782,113 @@ function npcTick_(req) {
   };
   const id = withLock_(() => appendLog_(spotId, 'npc:' + npc.id, npc.name, 'npc', payload));
   return { log: { id, ts: Date.now(), member: 'npc:' + npc.id, nickname: npc.name, type: 'npc', payload } };
+}
+
+/* =================================================================
+ * 現地ビデオ通話（Google Meet / Zoom / LINE / Facebook Messenger）
+ *   通話そのものは各サービスで行い、このアプリでは「現地に通話リンクを掲示」する
+ * ================================================================= */
+const CALL_SERVICES = [
+  { id: 'meet',      name: 'Google Meet', re: /^https:\/\/meet\.google\.com\//i },
+  { id: 'zoom',      name: 'Zoom',        re: /^https:\/\/([\w-]+\.)?zoom\.(us|com)\//i },
+  { id: 'line',      name: 'LINE',        re: /^https:\/\/(line\.me|lin\.ee|liff\.line\.me)\//i },
+  { id: 'messenger', name: 'Messenger',   re: /^https:\/\/(www\.)?(messenger\.com|m\.me|msngr\.com|facebook\.com|fb\.me)\//i }
+];
+const CALL_TTL_MS = 3 * 3600000; // 3時間で自動的に終了扱い
+
+function detectCallService_(url) {
+  return CALL_SERVICES.find(s => s.re.test(url)) || null;
+}
+
+function callPost_(req) {
+  const u = auth_(req);
+  const spotId = String(req.spot_id || '');
+  getSpot_(spotId);
+  const url = String(req.url || '').trim().match(/https:\/\/[^\s"'<>）」]+/);
+  if (!url) fail_('bad_url', '通話のリンク（https://…）を貼り付けてください');
+  const svc = detectCallService_(url[0]);
+  if (!svc) fail_('bad_service', '対応している通話リンクは Google Meet・Zoom・LINE・Messenger(Facebook) です');
+  const title = String(req.title || '').trim().slice(0, 30) || (u.nickname + 'さんの' + svc.name);
+  return withLock_(() => {
+    const id = newId_('C');
+    const now = Date.now();
+    appendObj_('Calls', {
+      id, spot_id: spotId, service: svc.id, url: url[0], title,
+      email: normEmail_(u.email), nickname: u.nickname,
+      createdAt: now, expiresAt: now + CALL_TTL_MS, status: 'open'
+    });
+    appendLog_(spotId, u.email, u.nickname, 'call', { service: svc.id, name: svc.name, title, state: 'open' });
+    return { calls: calls_(spotId, u), message: svc.name + 'の通話を現地に掲示しました' };
+  });
+}
+
+function callEnd_(req) {
+  const u = auth_(req);
+  return withLock_(() => {
+    const c = readAll_('Calls').find(r => String(r.id) === String(req.id));
+    if (!c) fail_('not_found', '通話が見つかりません');
+    if (normEmail_(c.email) !== normEmail_(u.email) && !isAdmin_(u)) fail_('forbidden', '通話を終了できるのは始めた人だけです');
+    updateObj_('Calls', c._row, { status: 'ended' });
+    appendLog_(String(c.spot_id), u.email, u.nickname, 'call', { service: c.service, title: c.title, state: 'ended' });
+    return { calls: calls_(String(c.spot_id), u), message: '通話の掲示を終了しました' };
+  });
+}
+
+function calls_(spotId, u) {
+  const now = Date.now();
+  const me = u ? normEmail_(u.email) : '';
+  return readAll_('Calls')
+    .filter(r => String(r.spot_id) === spotId && r.status !== 'ended' && Number(r.expiresAt) > now)
+    .map(r => {
+      const svc = CALL_SERVICES.find(s => s.id === r.service) || { name: r.service };
+      return {
+        id: String(r.id), service: r.service, serviceName: svc.name, url: String(r.url), title: String(r.title),
+        nickname: String(r.nickname), createdAt: Number(r.createdAt), mine: normEmail_(r.email) === me
+      };
+    })
+    .reverse();
+}
+
+/** ビデオ通話の背景用に、現地の画像を取得して base64 で返す
+ *  kind: street（ストリートビュー）/ aerial（航空写真）/ photo（スポットの背景画像） */
+function callBackground_(req) {
+  auth_(req);
+  const spot = getSpot_(req.spot_id);
+  const kind = String(req.kind || 'street');
+  const key = prop_('GOOGLE_MAPS_SERVER_KEY', '') || prop_('GOOGLE_MAPS_API_KEY', '');
+  const ll = spot.lat + ',' + spot.lng;
+  let url;
+
+  if (kind === 'photo') {
+    if (!spot.image_url) fail_('no_image', 'このスポットには背景画像が登録されていません');
+    const m = spot.image_url.match(/\/d\/([\w-]{20,})/) || spot.image_url.match(/[?&]id=([\w-]{20,})/);
+    const id = m ? m[1] : (/^[\w-]{20,}$/.test(spot.image_url) ? spot.image_url : '');
+    if (id) {
+      const blob = DriveApp.getFileById(id).getBlob();
+      return { base64: Utilities.base64Encode(blob.getBytes()), mime: blob.getContentType() };
+    }
+    url = spot.image_url;
+  } else {
+    if (!key) fail_('no_key', 'Googleマップのキーが未設定です（GOOGLE_MAPS_SERVER_KEY）');
+    if (kind === 'aerial') {
+      url = 'https://maps.googleapis.com/maps/api/staticmap?center=' + ll + '&zoom=17&size=640x360&scale=2&maptype=satellite&key=' + key;
+    } else {
+      const meta = JSON.parse(UrlFetchApp.fetch(
+        'https://maps.googleapis.com/maps/api/streetview/metadata?location=' + ll + '&radius=300&source=outdoor&key=' + key,
+        { muteHttpExceptions: true }).getContentText() || '{}');
+      if (meta.status === 'REQUEST_DENIED') fail_('key_denied', 'サーバー用のキーが使えません。GOOGLE_MAPS_SERVER_KEY（リファラー制限なし）を設定してください');
+      if (meta.status !== 'OK') fail_('no_streetview', 'この場所の近くにはストリートビューがありません。「航空写真」をお試しください');
+      const heading = Math.round(Number(req.heading || 0)) % 360;
+      url = 'https://maps.googleapis.com/maps/api/streetview?size=640x360&location=' + meta.location.lat + ',' + meta.location.lng +
+        '&heading=' + heading + '&pitch=5&fov=100&source=outdoor&key=' + key;
+    }
+  }
+  const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) {
+    fail_('image_error', '画像を取得できませんでした（' + res.getResponseCode() + '）。サーバー用キーのAPI有効化を確認してください');
+  }
+  const blob = res.getBlob();
+  return { base64: Utilities.base64Encode(blob.getBytes()), mime: blob.getContentType() || 'image/jpeg' };
 }
 
 /* ---------- 広場ヘルパ ---------- */

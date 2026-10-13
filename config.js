@@ -7,7 +7,7 @@
 window.APP_CONFIG = {
   APP_NAME: '現地集合フライト',
   SUBTITLE: 'イーグル隊長の空中散歩',
-  VERSION: 'v1.3.0',
+  VERSION: 'v1.5.0',
   BUILD: '20261013',
   STATUS: 'β版',
 
@@ -19,6 +19,9 @@ window.APP_CONFIG = {
 
   // 更新履歴（設定画面のバージョン情報に表示）
   CHANGELOG: [
+    { version: 'v1.5.0', date: '2026-10-13', note: '現地でビデオ通話（Google Meet・Zoom・LINE・Messenger）の掲示・参加と、現地の景色を使った通話用背景画像の作成を追加' },
+    { version: 'v1.4.0', date: '2026-10-13', note: 'フライトをGoogleマップ3D（Earth Studio風のカメラ飛行）に。現在地から目的地へ飛び、イーグル隊長の吹き出し・一時停止/次へ・声/効果音の音量調整を追加' },
+    { version: 'v1.3.1', date: '2026-10-13', note: 'ウインドウに常に表示される×（閉じる）ボタンを追加。背景クリックでも閉じられるように' },
     { version: 'v1.3.0', date: '2026-10-13', note: 'Googleマップの共有リンク（maps.app.goo.gl など）を貼るだけで行き先を登録できるように。一括取り込みにも対応' },
     { version: 'v1.2.0', date: '2026-10-13', note: 'Google Maps APIキーをスクリプトプロパティ管理に。スポットの「上空から見る／現地の景色」、広場の背景にストリートビューを追加' },
     { version: 'v1.1.0', date: '2026-10-13', note: '設定画面（GAS URLの設定・接続テスト）とバージョン情報画面を追加' },
@@ -82,6 +85,25 @@ window.APP_CONFIG = {
     { id: 'miko',  name: '歌好きミーコ',       emoji: '👩‍🎤', x: 76, y: 66 },
     { id: 'ponta', name: '旅人ポン太',         emoji: '🦝',   x: 52, y: 88 }
   ],
+
+  // 現地ビデオ通話（通話そのものは各アプリ。ここでは開き方と案内）
+  CALL_SERVICES: {
+    meet:      { name: 'Google Meet', icon: '🟢', open: 'https://meet.google.com/new',
+                 how: '開いたら「会議のリンク」をコピーして下に貼り付け' },
+    zoom:      { name: 'Zoom',        icon: '🔵', open: 'https://zoom.us/start/videomeeting',
+                 how: '開始後「参加者」→「招待」→「招待リンクをコピー」' },
+    line:      { name: 'LINE',        icon: '💬', open: 'https://line.me/R/',
+                 how: 'グループの通話で「通話リンクを作成」→コピー（スマホ）' },
+    messenger: { name: 'Messenger',   icon: '💜', open: 'https://www.messenger.com/',
+                 how: '通話を始めて「リンクを共有」→コピー' }
+  },
+
+  // フライト演出
+  FLIGHT: {
+    PREFER: 'map3d',          // 'map3d'＝Googleマップ3Dで飛ぶ / 'video'＝スポットの動画があれば動画優先
+    USE_GEOLOCATION: true,    // 現在地から出発（許可されない場合は START）
+    START: { lat: 35.6812, lng: 139.7671, name: '東京駅' }
+  },
 
   POLL_MS: 4000,              // 広場の更新間隔
   NPC_MS: 30000,              // NPCの賑やかし間隔（サーバー側でも35秒に制限）

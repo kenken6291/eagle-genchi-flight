@@ -1,7 +1,7 @@
 # 現地集合フライト（eagle-genchi-flight）
 
 「イーグル隊長の空中散歩」連動型 仮想イベント＆目的地フライトプラットフォーム  
-`v1.3.0 (Build 20261013)`
+`v1.5.0 (Build 20261013)`
 
 ## 1. アーキテクチャ
 
@@ -89,7 +89,7 @@ Spots には v1.3.0 で `address, maps_url` 列を末尾に追加しました（
 1. Googleスプレッドシートを新規作成 →「拡張機能 → Apps Script」→ `gas/Code.gs` を貼り付け。
 2. スクリプトプロパティに `GEMINI_API_KEY` を設定（必要に応じて `GOOGLE_MAPS_API_KEY`, `ADMIN_EMAILS`, `TTS_FOLDER_ID` なども）。
    - `GOOGLE_MAPS_API_KEY` は Maps Embed API 用。ログイン済み会員にだけ `clientConfig` で返し、スポットの「上空から見る／現地の景色」と広場のストリートビュー背景に使います。未設定ならボタンは出ません。
-   - ブラウザで使うキーは通信上は見えるため、GCP の「認証情報」で **HTTPリファラー制限（`https://kenken6291.github.io/*`）** と **API制限（Maps Embed API のみ）** を必ず設定してください。
+   - ブラウザで使うキーは通信上は見えるため、GCP の「認証情報」で **HTTPリファラー制限（`https://kenken6291.github.io/*`）** と **API制限（Maps Embed API・Maps JavaScript API・Map Tiles API のみ）** を必ず設定してください。
 3. エディタで `setup` を実行（シート作成と PEPPER 生成。権限を承認）。
 4. 「デプロイ → 新しいデプロイ → ウェブアプリ」。実行ユーザー：自分、アクセス：全員。
 5. 発行された URL を `config.js` の `GAS_URL` に設定し、GitHub Pages（`kenken6291.github.io/eagle-genchi-flight/`）へ push。
@@ -98,7 +98,28 @@ Spots には v1.3.0 で `address, maps_url` 列を末尾に追加しました（
 6. `cleanupLogs` に「時間主導型・1日1回」のトリガーを設定。
 7. **Code.gs を変更したら「デプロイを管理 → 編集 → バージョン：新バージョン」で再デプロイが必要です。**
 
-## 5. Google Earth Studio → Google Drive 配信
+## 5. フライト演出（Googleマップ3D）
+
+v1.4.0 から、フライトは Google Maps JavaScript API の **フォトリアル3Dマップ**（`gmp-map-3d`）で、現在地から目的地までカメラを飛ばします（Earth Studio のプレビューと同じ3Dタイル）。
+
+- 流れ：離陸（現在地の上空）→ 高度を上げて巡航 → 目的地へ降下 → 上空を旋回 → 「着陸する」で現地広場へ
+- GCP で **Maps JavaScript API** と **Map Tiles API** を有効化し、`GOOGLE_MAPS_API_KEY` の API制限に Maps Embed API と合わせて追加してください（HTTPリファラー制限はそのまま）。
+- ミステリーフライトでは地名ラベルを消した衛星モードで飛びます。
+- キーが無い・3Dが使えない場合は、スポットのフライト動画 → 雲のアニメーションの順に切り替わります。`config.js` の `FLIGHT.PREFER` を `'video'` にすると、動画が登録されたスポットは動画を優先します。
+
+## 5-3. 現地ビデオ通話（v1.5.0）
+
+- 通話そのものは Google Meet・Zoom・LINE・Messenger(Facebook) の各アプリで行い、このアプリでは「現地に通話リンクを掲示」します。掲示した通話は、同じ現地広場にいる全員に表示され「参加」で開けます（3時間で自動的に掲示終了）。
+- 掲示できるリンクはこの4サービスのドメインだけです（なりすましリンク対策）。
+- 「現地の背景画像をつくる」で、ストリートビュー（東西南北）・航空写真・登録写真・現地のイラストから 1920×1080 の背景画像を作り、保存して各アプリのバーチャル背景に設定します。
+- 背景用の画像は GAS がサーバー側で取得します。ブラウザ用キーはリファラー制限があるため、**サーバー用キー `GOOGLE_MAPS_SERVER_KEY`** を別に作成してください。
+  - アプリケーションの制限：なし（GAS は送信元IPが一定でないため）
+  - API の制限：**Street View Static API・Maps Static API のみ**
+  - 未設定・失敗時は「現地のイラスト」で背景を作れます。
+- シート `Calls`（id, spot_id, service, url, title, email, nickname, createdAt, expiresAt, status）が自動で作られます。
+- API：`callPost {spot_id, url, title}` / `callEnd {id}` / `callBackground {spot_id, kind(street/aerial/photo), heading}`。`plazaJoin`・`plazaPoll` の応答に `calls[]` が加わりました。
+
+## 5-2. Google Earth Studio → Google Drive 配信（任意）
 
 1. Earth Studio でプロジェクト作成（「Fly To」テンプレートが手軽）。出発地→目的地を設定、1280×720 / 30fps / 20〜40秒程度を推奨（Driveの再生処理が軽くなります）。
 2. Render で連番画像を書き出し → 動画編集ソフトまたは `ffmpeg -framerate 30 -i spot_%03d.jpeg -c:v libx264 -pix_fmt yuv420p -crf 23 flight.mp4` で MP4 化。
