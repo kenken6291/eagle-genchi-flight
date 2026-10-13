@@ -24,7 +24,7 @@
  * ■ コード変更後は「デプロイを管理 → 編集 → 新バージョン」で再デプロイが必要
  ******************************************************************/
 
-const APP = { NAME: '現地集合フライト', VERSION: 'v1.7.2', BUILD: '20261013' };
+const APP = { NAME: '現地集合フライト', VERSION: 'v1.8.0', BUILD: '20261013' };
 
 const SHEET_DEF = {
   Users: ['email', 'nickname', 'salt', 'hash', 'mustChange', 'role', 'status',
@@ -107,6 +107,7 @@ const ROUTES = {
   recommend: recommend_,
   narration: narration_,
   speak: speak_,
+  transcribe: transcribe_,
   // 現地広場
   plazaJoin: plazaJoin_,
   plazaPoll: plazaPoll_,
@@ -1037,6 +1038,43 @@ function memberId_(email) {
 /* =================================================================
  * Gemini / TTS
  * ================================================================= */
+/** 音声チャット：録音（WAV）を Gemini で文字起こしし、チャット向けに整える */
+function transcribe_(req) {
+  auth_(req);
+  const b64 = String(req.audio || '');
+  const mime = String(req.mime || 'audio/wav');
+  if (!b64) fail_('empty', '音声がありません');
+  if (b64.length > 3000000) fail_('too_large', '録音が長すぎます。30秒以内で話してください');
+  if (!/^audio\/(wav|x-wav|mp3|mpeg|ogg|flac|aac)$/.test(mime)) fail_('bad_audio', '対応していない音声形式です');
+  const prompt =
+    'この音声は、旅先の交流広場でのチャット発言です。日本語で書き起こし、チャットとして読みやすく整えてください。\n' +
+    '・「えー」「あのー」などの言いよどみ、言い直しは削除\n' +
+    '・句読点を付け、聞き間違いと思われる語は文脈から自然に補正\n' +
+    '・話し言葉の口調と意味は変えない。付け足しや要約はしない\n' +
+    '・140字以内。整えた本文だけを出力（説明・かぎかっこ・前置きは不要）\n' +
+    '・聞き取れない／無音の場合は空文字だけを出力';
+  const text = geminiParts_([{ inline_data: { mime_type: mime === 'audio/x-wav' ? 'audio/wav' : mime, data: b64 } }, { text: prompt }], 0.2);
+  const clean = cleanSpeech_(text).replace(/^["'「『]|["'」』]$/g, '').trim().slice(0, 140);
+  if (!clean) fail_('no_speech', 'うまく聞き取れませんでした。もう一度話してください');
+  return { text: clean };
+}
+
+function geminiParts_(parts, temperature) {
+  const key = prop_('GEMINI_API_KEY', '');
+  if (!key) fail_('no_key', 'GEMINI_API_KEY が未設定です（スクリプトプロパティ）');
+  const model = prop_('GEMINI_MODEL', 'gemini-2.5-flash');
+  const res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + key, {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    payload: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: temperature == null ? 0.3 : temperature } })
+  });
+  if (res.getResponseCode() !== 200) {
+    console.error(res.getContentText());
+    fail_('gemini_error', 'AIの応答に失敗しました（' + res.getResponseCode() + '）。もう一度お試しください');
+  }
+  const body = JSON.parse(res.getContentText());
+  return ((((body.candidates || [])[0] || {}).content || {}).parts || []).map(p => p.text || '').join('');
+}
+
 function gemini_(prompt, temperature, asJson) {
   const key = prop_('GEMINI_API_KEY', '');
   if (!key) fail_('no_key', 'GEMINI_API_KEY が未設定です（スクリプトプロパティ）');

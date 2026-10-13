@@ -7,7 +7,7 @@
 window.APP_CONFIG = {
   APP_NAME: '現地集合フライト',
   SUBTITLE: 'イーグル隊長の空中散歩',
-  VERSION: 'v1.7.2',
+  VERSION: 'v1.8.0',
   BUILD: '20261013',
   STATUS: 'β版',
 
@@ -19,6 +19,7 @@ window.APP_CONFIG = {
 
   // 更新履歴（設定画面のバージョン情報に表示）
   CHANGELOG: [
+    { version: 'v1.8.0', date: '2026-10-13', note: '現地広場の会話を音声でも。🎤で話すとGeminiが文字起こしして整え、みんなの発言の読み上げも選べるように' },
     { version: 'v1.7.2', date: '2026-10-13', note: 'イーグル隊長の音声の冒頭に「〜で読み上げてください」などの指示文が入る不具合を修正' },
     { version: 'v1.7.1', date: '2026-10-13', note: '広場の「通話中」に停止ボタンを追加（掲示した本人と管理者）' },
     { version: 'v1.7.0', date: '2026-10-13', note: '音声のみの通話として X スペース・Clubhouse・stand.fm・Yay! を追加' },
