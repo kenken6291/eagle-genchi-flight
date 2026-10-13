@@ -195,7 +195,7 @@
       <p id="plazaCount" class="plaza-count"></p>
     </div>
     <div class="plaza-head-actions">
-      <button id="btnCall" class="btn btn-amber">ビデオ通話</button>
+      <button id="btnCall" class="btn btn-amber">通話</button>
       <button id="btnStreetView" class="btn btn-ghost" aria-pressed="false" hidden>現地の景色</button>
       <button id="btnSound" class="btn btn-ghost" aria-pressed="true">音あり</button>
       <button id="btnBgm" class="btn btn-ghost" aria-pressed="false">BGM</button>
@@ -231,8 +231,8 @@
 <!-- ============ 現地ビデオ通話 ============ -->
 <div id="callModal" class="modal" hidden>
   <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="callModalTitle">
-    <div class="modal-head"><h2 id="callModalTitle">現地でビデオ通話</h2></div>
-    <p class="note">通話は Google Meet・Zoom・LINE・Messenger(Facebook) のアプリで行います。現地の景色を通話の背景にして、みんなで「現地に集まった」気分で話しましょう。</p>
+    <div class="modal-head"><h2 id="callModalTitle">現地で通話（ビデオ・音声）</h2></div>
+    <p class="note">ビデオ通話は Google Meet・Zoom・LINE・Messenger(Facebook)、音声のみは X スペース・Clubhouse・stand.fm・Yay! のアプリで行います。ビデオ通話では現地の景色を背景にして、みんなで「現地に集まった」気分で話しましょう。</p>
 
     <section class="call-sec">
       <h3 class="sub-title">いま現地で開かれている通話</h3>
@@ -240,7 +240,7 @@
     </section>
 
     <section class="call-sec">
-      <h3 class="sub-title">1. 現地の背景画像をつくる</h3>
+      <h3 class="sub-title">1. 現地の背景画像をつくる（ビデオ通話のとき）</h3>
       <div class="bg-maker">
         <div class="bg-preview">
           <canvas id="bgCanvas" width="1920" height="1080" aria-label="背景画像のプレビュー"></canvas>

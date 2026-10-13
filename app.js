@@ -1476,8 +1476,8 @@
       case 'call':
         if (!mine) {
           chatLine(null, p.state === 'ended'
-            ? `${log.nickname}さんの${p.name || svcOf(p.service).name}通話が終了しました`
-            : `📹 ${log.nickname}さんが${p.name || svcOf(p.service).name}で通話を始めました（「参加」から入れます）`);
+            ? `${log.nickname}さんの${p.name || svcOf(p.service).name}が終了しました`
+            : `${p.audio ? '🎙️' : '📹'} ${log.nickname}さんが${p.name || svcOf(p.service).name}で${p.audio ? '音声ルーム' : '通話'}を始めました（「参加」から入れます）`);
           if (p.state !== 'ended') { Music.chime(); bubble(log.member, '📹 通話しよう！'); }
         }
         break;
@@ -1670,12 +1670,12 @@
     // 広場の右上に常に見える通話バー
     const bar = $('#callBar');
     if (!P.calls.length) {
-      bar.innerHTML = '<button type="button" class="call-start" data-call-open>📹 現地でビデオ通話を始める</button>';
+      bar.innerHTML = '<button type="button" class="call-start" data-call-open>📹🎙️ 現地で通話を始める（ビデオ・音声）</button>';
     } else {
       bar.innerHTML = `<p class="call-live">📹 現地で${P.calls.length}件の通話中</p>` +
         P.calls.slice(0, 2).map(c => `
           <div class="call-item">
-            <span class="call-svc">${svcOf(c.service).icon} ${esc(c.serviceName)}</span>
+            <span class="call-svc">${svcOf(c.service).icon} ${esc(c.serviceName)}${c.audio ? '<em class="audio-tag">音声</em>' : ''}</span>
             <span class="call-title">${esc(c.title)}</span>
             <button type="button" class="btn btn-primary btn-sm" data-call-join="${esc(c.id)}">参加</button>
           </div>`).join('') +
@@ -1684,7 +1684,7 @@
     // モーダル内の一覧
     $('#callList').innerHTML = P.calls.length ? P.calls.map(c => `
       <li class="call-row">
-        <span class="call-svc">${svcOf(c.service).icon} ${esc(c.serviceName)}</span>
+        <span class="call-svc">${svcOf(c.service).icon} ${esc(c.serviceName)}${c.audio ? '<em class="audio-tag">音声</em>' : ''}</span>
         <span class="call-main"><strong>${esc(c.title)}</strong><small>${esc(c.nickname)}さん　${timeAgo(c.createdAt)}</small></span>
         <button type="button" class="btn btn-primary btn-sm" data-call-join="${esc(c.id)}">参加する</button>
         ${c.mine ? `<button type="button" class="btn btn-ghost btn-sm" data-call-end="${esc(c.id)}">終了</button>` : ''}
@@ -1695,17 +1695,21 @@
     const c = S.plaza?.calls?.find(x => x.id === id);
     if (!c) return;
     window.open(c.url, '_blank', 'noopener');
-    toast(`${c.serviceName}を開きました。現地の背景を設定して入りましょう`);
+    toast(c.audio ? `${c.serviceName}を開きました。音声で参加しましょう` : `${c.serviceName}を開きました。現地の背景を設定して入りましょう`);
   }
 
   function openCallModal() {
     const P = S.plaza;
     if (!P) return;
-    $('#svcGrid').innerHTML = Object.entries(C.CALL_SERVICES || {}).map(([id, s]) => `
+    const svcCard = ([id, s]) => `
       <div class="svc-card">
         <a class="btn btn-outline btn-sm" href="${esc(s.open)}" target="_blank" rel="noopener">${s.icon} ${esc(s.name)}を開く</a>
         <small>${esc(s.how)}</small>
-      </div>`).join('');
+      </div>`;
+    const svcs = Object.entries(C.CALL_SERVICES || {});
+    $('#svcGrid').innerHTML =
+      '<p class="svc-group">📹 ビデオ通話</p>' + svcs.filter(([, s]) => !s.audio).map(svcCard).join('') +
+      '<p class="svc-group">🎙️ 音声のみ（スペース・ルーム・ライブ）</p>' + svcs.filter(([, s]) => s.audio).map(svcCard).join('');
     const kinds = [
       { k: 'street', h: 0, label: 'ストリートビュー（北）' },
       { k: 'street', h: 90, label: '東' },

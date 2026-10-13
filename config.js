@@ -7,7 +7,7 @@
 window.APP_CONFIG = {
   APP_NAME: '現地集合フライト',
   SUBTITLE: 'イーグル隊長の空中散歩',
-  VERSION: 'v1.6.1',
+  VERSION: 'v1.7.0',
   BUILD: '20261013',
   STATUS: 'β版',
 
@@ -19,6 +19,7 @@ window.APP_CONFIG = {
 
   // 更新履歴（設定画面のバージョン情報に表示）
   CHANGELOG: [
+    { version: 'v1.7.0', date: '2026-10-13', note: '音声のみの通話として X スペース・Clubhouse・stand.fm・Yay! を追加' },
     { version: 'v1.6.1', date: '2026-10-13', note: 'スマホでログアウトボタンが表示されない不具合を修正。プロフィール画面にもログアウトを追加' },
     { version: 'v1.6.0', date: '2026-10-13', note: '現地広場のアイコンを顔写真に。普通・笑顔・困った顔・驚いた顔の4表情を登録でき、会話や動作で表情が変わる' },
     { version: 'v1.5.0', date: '2026-10-13', note: '現地でビデオ通話（Google Meet・Zoom・LINE・Messenger）の掲示・参加と、現地の景色を使った通話用背景画像の作成を追加' },
@@ -113,7 +114,16 @@ window.APP_CONFIG = {
     line:      { name: 'LINE',        icon: '💬', open: 'https://line.me/R/',
                  how: 'グループの通話で「通話リンクを作成」→コピー（スマホ）' },
     messenger: { name: 'Messenger',   icon: '💜', open: 'https://www.messenger.com/',
-                 how: '通話を始めて「リンクを共有」→コピー' }
+                 how: '通話を始めて「リンクを共有」→コピー' },
+    // 音声のみ（audio: true）
+    xspaces:   { name: 'X スペース',  icon: '✖️', audio: true, open: 'https://x.com/',
+                 how: 'アプリの「＋」→「スペース」で開始→「共有」→「リンクをコピー」' },
+    clubhouse: { name: 'Clubhouse',   icon: '👋', audio: true, open: 'https://www.clubhouse.com/',
+                 how: 'ルームを開始→「共有」→「リンクをコピー」' },
+    standfm:   { name: 'stand.fm',    icon: '🎙️', audio: true, open: 'https://stand.fm/',
+                 how: 'ライブ配信を開始→「シェア」→「リンクをコピー」' },
+    yay:       { name: 'Yay!',        icon: '🌈', audio: true, open: 'https://yay.space/',
+                 how: '通話を開始→「共有」→「リンクをコピー」' }
   },
 
   // フライト演出
