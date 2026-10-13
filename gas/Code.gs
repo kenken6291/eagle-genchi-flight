@@ -24,7 +24,7 @@
  * ■ コード変更後は「デプロイを管理 → 編集 → 新バージョン」で再デプロイが必要
  ******************************************************************/
 
-const APP = { NAME: '現地集合フライト', VERSION: 'v1.6.0', BUILD: '20261013' };
+const APP = { NAME: '現地集合フライト', VERSION: 'v1.7.2', BUILD: '20261013' };
 
 const SHEET_DEF = {
   Users: ['email', 'nickname', 'salt', 'hash', 'mustChange', 'role', 'status',
@@ -727,7 +727,7 @@ function narration_(req) {
   const spot = getSpot_(req.spot_id);
   const mode = ['flight', 'mystery', 'arrival'].indexOf(req.mode) >= 0 ? req.mode : 'flight';
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'nar_' + mode + '_' + spot.spot_id;
+  const cacheKey = 'nar2_' + mode + '_' + spot.spot_id; // v1.7.2 で指示文入りの古いキャッシュを無効化
   let script = mode !== 'arrival' ? cache.get(cacheKey) : null;
 
   if (!script) {
@@ -741,7 +741,8 @@ function narration_(req) {
                '現地でできること（' + (spot.activity_tags.join('・') || '交流') + '）に触れ、BBQや歌、ダンスに誘ってください。'
     };
     script = gemini_(CAPTAIN + '\n\n' + tasks[mode] + '\n読み上げ用なので記号・絵文字・括弧書きは使わず、セリフ本文だけを出力。\n\n' + info, 0.9)
-      .replace(/[*#「」]/g, '').trim();
+      .replace(/[*#「」]/g, '');
+    script = cleanSpeech_(script);
     if (mode !== 'arrival') cache.put(cacheKey, script, 21600);
   }
 
@@ -755,7 +756,7 @@ function narration_(req) {
 
 function speak_(req) {
   auth_(req);
-  const text = String(req.text || '').trim().slice(0, 300);
+  const text = cleanSpeech_(String(req.text || '')).slice(0, 300);
   if (!text) fail_('empty', '読み上げる文章がありません');
   return { audio: tts_(text) };
 }
@@ -874,7 +875,12 @@ const CALL_SERVICES = [
   { id: 'meet',      name: 'Google Meet', re: /^https:\/\/meet\.google\.com\//i },
   { id: 'zoom',      name: 'Zoom',        re: /^https:\/\/([\w-]+\.)?zoom\.(us|com)\//i },
   { id: 'line',      name: 'LINE',        re: /^https:\/\/(line\.me|lin\.ee|liff\.line\.me)\//i },
-  { id: 'messenger', name: 'Messenger',   re: /^https:\/\/(www\.)?(messenger\.com|m\.me|msngr\.com|facebook\.com|fb\.me)\//i }
+  { id: 'messenger', name: 'Messenger',   re: /^https:\/\/(www\.)?(messenger\.com|m\.me|msngr\.com|facebook\.com|fb\.me)\//i },
+  // 音声のみ
+  { id: 'xspaces',   name: 'X スペース',  audio: true, re: /^https:\/\/(www\.|mobile\.)?(x|twitter)\.com\/i\/spaces\//i },
+  { id: 'clubhouse', name: 'Clubhouse',   audio: true, re: /^https:\/\/(www\.)?(clubhouse\.com|joinclubhouse\.com|clubhouse\.app)\//i },
+  { id: 'standfm',   name: 'stand.fm',    audio: true, re: /^https:\/\/(www\.)?stand\.fm\//i },
+  { id: 'yay',       name: 'Yay!',        audio: true, re: /^https:\/\/(www\.)?yay\.space\//i }
 ];
 const CALL_TTL_MS = 3 * 3600000; // 3時間で自動的に終了扱い
 
@@ -889,7 +895,7 @@ function callPost_(req) {
   const url = String(req.url || '').trim().match(/https:\/\/[^\s"'<>）」]+/);
   if (!url) fail_('bad_url', '通話のリンク（https://…）を貼り付けてください');
   const svc = detectCallService_(url[0]);
-  if (!svc) fail_('bad_service', '対応している通話リンクは Google Meet・Zoom・LINE・Messenger(Facebook) です');
+  if (!svc) fail_('bad_service', '対応しているリンクは Google Meet・Zoom・LINE・Messenger(Facebook)・X スペース・Clubhouse・stand.fm・Yay! です');
   const title = String(req.title || '').trim().slice(0, 30) || (u.nickname + 'さんの' + svc.name);
   return withLock_(() => {
     const id = newId_('C');
@@ -899,7 +905,7 @@ function callPost_(req) {
       email: normEmail_(u.email), nickname: u.nickname,
       createdAt: now, expiresAt: now + CALL_TTL_MS, status: 'open'
     });
-    appendLog_(spotId, u.email, u.nickname, 'call', { service: svc.id, name: svc.name, title, state: 'open' });
+    appendLog_(spotId, u.email, u.nickname, 'call', { service: svc.id, name: svc.name, title, state: 'open', audio: !!svc.audio });
     return { calls: calls_(spotId, u), message: svc.name + 'の通話を現地に掲示しました' };
   });
 }
@@ -924,7 +930,7 @@ function calls_(spotId, u) {
     .map(r => {
       const svc = CALL_SERVICES.find(s => s.id === r.service) || { name: r.service };
       return {
-        id: String(r.id), service: r.service, serviceName: svc.name, url: String(r.url), title: String(r.title),
+        id: String(r.id), service: r.service, serviceName: svc.name, audio: !!svc.audio, url: String(r.url), title: String(r.title),
         nickname: String(r.nickname), createdAt: Number(r.createdAt), mine: normEmail_(r.email) === me
       };
     })
@@ -1067,7 +1073,8 @@ function tts_(text) {
   if (!key) fail_('no_key', 'GEMINI_API_KEY が未設定です');
   const voice = prop_('TTS_VOICE', 'Puck');
   const model = prop_('TTS_MODEL', 'gemini-2.5-flash-preview-tts');
-  const fileName = 'tts_' + hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, voice + '|' + text, Utilities.Charset.UTF_8)) + '.wav';
+  text = cleanSpeech_(text);
+  const fileName = 'tts2_' + hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, voice + '|' + text, Utilities.Charset.UTF_8)) + '.wav';
   const folderId = prop_('TTS_FOLDER_ID', '');
 
   if (folderId) {
@@ -1077,7 +1084,7 @@ function tts_(text) {
 
   const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + key;
   const payload = {
-    contents: [{ parts: [{ text: '陽気で頼もしい鷲の隊長として、元気よく、はきはきと、少し早口で読み上げてください：\n' + text }] }],
+    contents: [{ parts: [{ text: text }] }],
     generationConfig: {
       responseModalities: ['AUDIO'],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } }
@@ -1099,6 +1106,17 @@ function tts_(text) {
     catch (e) { console.warn('TTSキャッシュ保存失敗: ' + e); }
   }
   return { base64: Utilities.base64Encode(wav), mime: 'audio/wav' };
+}
+
+/** 読み上げ用に、AIが付けがちな前置き・指示文・ト書きを取り除く */
+function cleanSpeech_(s) {
+  let t = String(s || '').trim();
+  // 「〜で読み上げてください：」「以下はセリフです：」などの前置き行
+  t = t.replace(/^[^\n]{0,80}?(読み上げ|読んで|セリフ|台詞|ナレーション|話して|以下)[^\n]{0,40}?[:：]\s*/, '');
+  t = t.replace(/^(イーグル隊長|隊長|鷲)\s*[:：]\s*/, '');
+  // （元気よく）[笑顔で] などのト書き
+  t = t.replace(/[（(\[【][^）)\]】]{0,20}[）)\]】]/g, '');
+  return t.replace(/\n{2,}/g, '\n').trim();
 }
 
 function pcmToWav_(pcm, sampleRate) {
