@@ -1663,6 +1663,9 @@
   const svcOf = id => (C.CALL_SERVICES || {})[id] || { name: id, icon: '📹' };
   const timeAgo = ts => { const m = Math.floor((Date.now() - ts) / 60000); return m < 1 ? 'たった今' : m < 60 ? `${m}分前` : `${Math.floor(m / 60)}時間前`; };
 
+  // 停止できるのは掲示した本人と管理者
+  const canEndCall = c => c.mine || S.user?.role === 'admin';
+
   function renderCalls(list) {
     const P = S.plaza;
     if (!P) return;
@@ -1678,6 +1681,7 @@
             <span class="call-svc">${svcOf(c.service).icon} ${esc(c.serviceName)}${c.audio ? '<em class="audio-tag">音声</em>' : ''}</span>
             <span class="call-title">${esc(c.title)}</span>
             <button type="button" class="btn btn-primary btn-sm" data-call-join="${esc(c.id)}">参加</button>
+            ${canEndCall(c) ? `<button type="button" class="btn btn-stop btn-sm" data-call-end="${esc(c.id)}">停止</button>` : ''}
           </div>`).join('') +
         '<button type="button" class="call-more" data-call-open>背景をつくる・通話を始める</button>';
     }
@@ -1687,7 +1691,7 @@
         <span class="call-svc">${svcOf(c.service).icon} ${esc(c.serviceName)}${c.audio ? '<em class="audio-tag">音声</em>' : ''}</span>
         <span class="call-main"><strong>${esc(c.title)}</strong><small>${esc(c.nickname)}さん　${timeAgo(c.createdAt)}</small></span>
         <button type="button" class="btn btn-primary btn-sm" data-call-join="${esc(c.id)}">参加する</button>
-        ${c.mine ? `<button type="button" class="btn btn-ghost btn-sm" data-call-end="${esc(c.id)}">終了</button>` : ''}
+        ${canEndCall(c) ? `<button type="button" class="btn btn-stop btn-sm" data-call-end="${esc(c.id)}">停止</button>` : ''}
       </li>`).join('') : '<li class="empty">まだ通話はありません。下の手順で始めてみましょう</li>';
   }
 
@@ -1848,9 +1852,14 @@
       if (j) { joinCall(j.dataset.callJoin); return; }
       const en = e.target.closest('[data-call-end]');
       if (en) {
-        if (!confirm('この通話の掲示を終了しますか？（通話アプリ側の通話は各アプリで終了してください）')) return;
+        if (!confirm('この通話を「通話中」から外しますか？\n（Meet などの通話そのものは、各アプリで終了してください）')) return;
         busyButton(en, async () => {
-          try { const r = await api('callEnd', { id: en.dataset.callEnd }); renderCalls(r.calls); toast(r.message); }
+          try {
+            const r = await api('callEnd', { id: en.dataset.callEnd });
+            renderCalls(r.calls);
+            chatLine(null, '通話の掲示を停止しました');
+            toast(r.message);
+          }
           catch (err) { toast(err.message, true); }
         });
       }

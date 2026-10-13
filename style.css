@@ -462,6 +462,9 @@ label > input, label > select, label > .pw-wrap { margin-top: .25em; }
 .call-item { display: flex; align-items: center; gap: .4rem; background: var(--cloud); border-radius: var(--radius-s); padding: .3rem .5rem; font-size: .85rem; }
 .call-item .call-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .call-svc { font-weight: 800; white-space: nowrap; color: var(--sky-deep); }
+.btn-stop { background: #fff; color: var(--danger); border: 1.5px solid var(--danger); white-space: nowrap; }
+.btn-stop:hover { background: #fde7e5; }
+.call-item .btn-sm { flex-shrink: 0; }
 .call-more { border: 0; background: none; color: var(--sky); font-weight: 700; font-size: .82rem; cursor: pointer; justify-self: start; padding: 0; }
 
 .call-sec { border-top: 1px solid var(--line); padding-top: .4rem; margin-top: .8rem; }
