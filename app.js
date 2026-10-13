@@ -1330,6 +1330,149 @@
   }
 
   /* =============================================================
+   * 音声で会話（録音 → Gemini で文字起こし・整形 → チャット）
+   *   ＋ みんなの発言の読み上げ（ブラウザの音声合成）
+   * ============================================================= */
+  const Mic = { rec: null, chunks: [], stream: null, timer: null, started: 0, state: 'idle' };
+  const MIC_MAX_MS = 30000;
+
+  function setMicState(state, label) {
+    Mic.state = state;
+    const b = $('#btnMic');
+    b.classList.toggle('is-rec', state === 'rec');
+    b.classList.toggle('is-busy', state === 'busy');
+    b.textContent = label || (state === 'rec' ? '■' : state === 'busy' ? '…' : '🎤');
+    b.setAttribute('aria-label', state === 'rec' ? '録音を止める' : '音声で話す');
+    b.disabled = state === 'busy';
+    $('#chatInput').placeholder = state === 'rec' ? '話してください（もう一度🎤で終了）'
+      : state === 'busy' ? 'Geminiで整えています…' : 'メッセージを入力（🎤で音声も）';
+  }
+
+  async function toggleMic() {
+    if (Mic.state === 'rec') { stopMic(); return; }
+    if (Mic.state !== 'idle' || !S.plaza) return;
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { toast('このブラウザでは録音できません', true); return; }
+    try {
+      Mic.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch { toast('マイクを使えませんでした。ブラウザのマイク許可を確認してください', true); return; }
+    stopReadAloud();
+    Mic.chunks = [];
+    Mic.rec = new MediaRecorder(Mic.stream);
+    Mic.rec.ondataavailable = e => { if (e.data.size) Mic.chunks.push(e.data); };
+    Mic.rec.onstop = onMicStop;
+    Mic.rec.start();
+    Mic.started = Date.now();
+    setMicState('rec');
+    Mic.timer = setInterval(() => {
+      const ms = Date.now() - Mic.started;
+      $('#chatInput').placeholder = `話してください… ${Math.ceil((MIC_MAX_MS - ms) / 1000)}秒（もう一度🎤で終了）`;
+      if (ms >= MIC_MAX_MS) stopMic();
+    }, 500);
+  }
+
+  function stopMic() {
+    clearInterval(Mic.timer);
+    if (Mic.rec && Mic.rec.state !== 'inactive') Mic.rec.stop();
+    Mic.stream?.getTracks().forEach(t => t.stop());
+    Mic.stream = null;
+  }
+
+  async function onMicStop() {
+    const blob = new Blob(Mic.chunks, { type: Mic.rec?.mimeType || 'audio/webm' });
+    Mic.rec = null;
+    if (Date.now() - Mic.started < 700 || blob.size < 1000) { setMicState('idle'); toast('短すぎました。もう一度話してください'); return; }
+    setMicState('busy');
+    try {
+      const wav = await blobToWav16k(blob);
+      const r = await api('transcribe', { audio: wav, mime: 'audio/wav' });
+      const input = $('#chatInput');
+      if ($('#micAutoSend').checked) {
+        sendChat(r.text);
+        input.value = '';
+      } else {
+        input.value = r.text;
+        input.focus();
+        toast('整えた文を入れました。確認して「送る」を押してください');
+      }
+    } catch (err) { toast(err.message || '音声を文字にできませんでした', true); }
+    finally { setMicState('idle'); }
+  }
+
+  // どのブラウザの録音形式でも Gemini が読めるよう、16kHz モノラル WAV に変換
+  async function blobToWav16k(blob) {
+    const buf = await blob.arrayBuffer();
+    const ctx = Music.ensure();
+    const audio = await ctx.decodeAudioData(buf.slice(0));
+    const rate = 16000;
+    const off = new OfflineAudioContext(1, Math.ceil(audio.duration * rate), rate);
+    const src = off.createBufferSource();
+    src.buffer = audio; src.connect(off.destination); src.start();
+    const pcm = (await off.startRendering()).getChannelData(0);
+    const out = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+    const w = (o, s) => { for (let i = 0; i < s.length; i++) out.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, 'RIFF'); out.setUint32(4, 36 + pcm.length * 2, true); w(8, 'WAVE');
+    w(12, 'fmt '); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
+    out.setUint32(24, rate, true); out.setUint32(28, rate * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true);
+    w(36, 'data'); out.setUint32(40, pcm.length * 2, true);
+    for (let i = 0; i < pcm.length; i++) {
+      const v = Math.max(-1, Math.min(1, pcm[i]));
+      out.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+    }
+    const bytes = new Uint8Array(out.buffer);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+
+  /* ---------- みんなの発言の読み上げ ---------- */
+  function readAloud(name, text) {
+    if (!$('#readAloud')?.checked || !S.sound || !window.speechSynthesis || Mic.state === 'rec') return;
+    const u = new SpeechSynthesisUtterance(`${name}さん。${text}`);
+    u.lang = 'ja-JP';
+    u.rate = 1.05;
+    u.volume = S.voiceVol ?? 1;
+    const ja = speechSynthesis.getVoices().find(v => v.lang?.startsWith('ja'));
+    if (ja) u.voice = ja;
+    speechSynthesis.speak(u);
+  }
+  function stopReadAloud() { window.speechSynthesis?.cancel(); }
+
+  // 古い index.html でも動くよう、マイク関連の部品が無ければ作る
+  function ensureVoiceUi() {
+    const form = $('#chatForm');
+    if (!form) return;
+    if (!$('#btnMic')) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.id = 'btnMic'; b.className = 'mic-btn';
+      b.setAttribute('aria-label', '音声で話す'); b.textContent = '🎤';
+      form.prepend(b);
+      $('#chatInput').placeholder = 'メッセージを入力（🎤で音声も）';
+    }
+    if (!$('#readAloud')) {
+      form.insertAdjacentHTML('beforebegin', '<label class="check read-toggle"><input type="checkbox" id="readAloud"> みんなの発言を読み上げる</label>');
+    }
+    if (!$('#micAutoSend')) {
+      form.insertAdjacentHTML('afterend', '<label class="check mic-auto"><input type="checkbox" id="micAutoSend"> 話し終えたら、整えた文をそのまま送る</label>');
+    }
+  }
+
+  function initVoiceChat() {
+    ensureVoiceUi();
+    $('#btnMic').addEventListener('click', toggleMic);
+    try {
+      $('#readAloud').checked = localStorage.getItem('egf_read_aloud') === '1';
+      $('#micAutoSend').checked = localStorage.getItem('egf_mic_auto') === '1';
+    } catch { /* 保存できない環境 */ }
+    $('#readAloud').addEventListener('change', e => {
+      try { localStorage.setItem('egf_read_aloud', e.target.checked ? '1' : '0'); } catch { /* 無視 */ }
+      if (!e.target.checked) stopReadAloud();
+    });
+    $('#micAutoSend').addEventListener('change', e => {
+      try { localStorage.setItem('egf_mic_auto', e.target.checked ? '1' : '0'); } catch { /* 無視 */ }
+    });
+  }
+
+  /* =============================================================
    * 現地合流広場
    * ============================================================= */
   async function enterPlaza(spot) {
@@ -1468,7 +1611,7 @@
         if (!mine) chatLine(null, `${log.nickname}さんが飛び立ちました`);
         break;
       case 'chat':
-        if (!mine) { chatLine(log.nickname, p.text); bubble(log.member, p.text); setTempExpr(log.member, p.expr); }
+        if (!mine) { chatLine(log.nickname, p.text); bubble(log.member, p.text); setTempExpr(log.member, p.expr); readAloud(log.nickname, p.text); }
         break;
       case 'action':
         if (!mine) { doAction(log.member, p.id, p.song); chatLine(null, `${log.nickname}さん：${actionLabel(p.id)}`); }
@@ -1483,6 +1626,7 @@
         break;
       case 'npc':
         chatLine(log.nickname, p.text, 'npc');
+        readAloud(log.nickname, p.text);
         bubble(log.member, p.text);
         if (p.action && p.action !== 'none') doAction(log.member, p.action, Math.floor(Math.random() * 3));
         break;
@@ -1571,6 +1715,7 @@
     clearTimeout(P.moveTimer);
     $('#stageSv').innerHTML = '';
     closeModal('#callModal');
+    stopMic(); setMicState('idle'); stopReadAloud();
     Music.bgmStop();
     $('#btnBgm').setAttribute('aria-pressed', 'false');
     stopVoice();
@@ -2206,6 +2351,7 @@
     initAdmin();
     initCall();
     initFaces();
+    initVoiceChat();
     initSettings();
     renderVersion();
 

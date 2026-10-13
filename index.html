@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=M+PLUS+Rounded+1c:wght@400;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=1.8.1">
 </head>
 <body>
 
@@ -220,10 +220,13 @@
       <div id="actionBar" class="action-bar"></div>
       <div id="phraseBar" class="phrase-bar"></div>
       <ol id="chatLog" class="chat-log" aria-live="polite"></ol>
+      <label class="check read-toggle"><input type="checkbox" id="readAloud"> みんなの発言を読み上げる</label>
       <form id="chatForm" class="chat-form">
-        <input id="chatInput" type="text" maxlength="140" placeholder="メッセージを入力" autocomplete="off">
+        <button type="button" id="btnMic" class="mic-btn" aria-label="音声で話す" title="押して話す（もう一度押すと送信準備）">🎤</button>
+        <input id="chatInput" type="text" maxlength="140" placeholder="メッセージを入力（🎤で音声も）" autocomplete="off">
         <button class="btn btn-primary" type="submit">送る</button>
       </form>
+      <label class="check mic-auto"><input type="checkbox" id="micAutoSend"> 話し終えたら、整えた文をそのまま送る</label>
     </aside>
   </div>
 </section>
@@ -442,7 +445,7 @@
 <button type="button" id="versionBar" class="version-bar"></button>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="config.js"></script>
-<script src="app.js"></script>
+<script src="config.js?v=1.8.1"></script>
+<script src="app.js?v=1.8.1"></script>
 </body>
 </html>

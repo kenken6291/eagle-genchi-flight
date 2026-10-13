@@ -400,7 +400,17 @@ label > input, label > select, label > .pw-wrap { margin-top: .25em; }
 .chat-log .who { font-weight: 800; color: var(--sky-deep); margin-right: .4em; }
 .chat-log .npc .who { color: #6b48a8; }
 .chat-log .sys { color: var(--muted); font-size: .8rem; }
-.chat-form { display: flex; gap: .4rem; }
+.chat-form { display: flex; gap: .4rem; align-items: stretch; }
+.chat-form input { flex: 1; min-width: 0; }
+.chat-form .btn { white-space: nowrap; flex-shrink: 0; }
+.mic-btn {
+  flex-shrink: 0; width: 2.8rem; border-radius: 50%; border: 2px solid var(--sky); background: #fff;
+  font-size: 1.25rem; cursor: pointer; display: grid; place-items: center;
+}
+.mic-btn:hover { background: var(--sky-pale); }
+.mic-btn.is-rec { background: var(--danger); border-color: var(--danger); color: #fff; animation: pulse 1.2s ease-in-out infinite; }
+.mic-btn.is-busy { opacity: .6; cursor: progress; }
+.read-toggle, .mic-auto { font-size: .8rem; color: var(--muted); }
 
 /* ---------- 顔写真アイコン ---------- */
 .avatar .face.has-photo {
