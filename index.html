@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=M+PLUS+Rounded+1c:wght@400;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<link rel="stylesheet" href="style.css?v=1.8.1">
+<link rel="stylesheet" href="style.css?v=1.9.0">
 </head>
 <body>
 
@@ -413,6 +413,7 @@
     </div>
     <nav class="admin-tabs">
       <button class="settings-tab admin-tab is-active" data-tab="gas">接続先（GAS）</button>
+      <button class="settings-tab admin-tab" data-tab="model">AIモデル</button>
       <button class="settings-tab admin-tab" data-tab="version">バージョン情報</button>
     </nav>
 
@@ -434,6 +435,16 @@
       </form>
     </div>
 
+    <div class="settings-body" data-body="model" hidden>
+      <div class="settings-form">
+        <label>AIに使うGeminiモデル
+          <select id="modelSelect"></select>
+        </label>
+        <p class="note">選んだモデルが使えない時は、汎用の最新モデルに自動で切り替わります。<br>イーグル隊長のセリフ・行き先選び・スポット取り込み・音声の文字起こしに使います（読み上げ音声は専用モデル）。</p>
+        <p id="modelMsg" class="gas-test-msg" role="status"></p>
+      </div>
+    </div>
+
     <div class="settings-body" data-body="version" hidden>
       <div id="versionInfo"></div>
     </div>
@@ -445,7 +456,7 @@
 <button type="button" id="versionBar" class="version-bar"></button>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="config.js?v=1.8.1"></script>
-<script src="app.js?v=1.8.1"></script>
+<script src="config.js?v=1.9.0"></script>
+<script src="app.js?v=1.9.0"></script>
 </body>
 </html>

@@ -7,8 +7,8 @@
 window.APP_CONFIG = {
   APP_NAME: '現地集合フライト',
   SUBTITLE: 'イーグル隊長の空中散歩',
-  VERSION: 'v1.8.1',
-  BUILD: '20261013',
+  VERSION: 'v1.9.0',
+  BUILD: '20261120',
   STATUS: 'β版',
 
   // GAS ウェブアプリの URL（デプロイ後に差し替え）
@@ -19,6 +19,7 @@ window.APP_CONFIG = {
 
   // 更新履歴（設定画面のバージョン情報に表示）
   CHANGELOG: [
+    { version: 'v1.9.0', date: '2026-11-20', note: 'Geminiの新しいバージョン（4 Hydrogen / 4 Neon / 4 Carbon / 4 Argon / 3.8 Flash / 3.5 Flash）に対応。設定の「AIモデル」で選べ、選んだモデルが使えない時は汎用の最新モデルに自動で切り替わる' },
     { version: 'v1.8.1', date: '2026-10-13', note: '音声入力のマイクが表示されない場合がある問題を修正（古いファイルのキャッシュ対策）。「送る」ボタンの折り返しを修正' },
     { version: 'v1.8.0', date: '2026-10-13', note: '現地広場の会話を音声でも。🎤で話すとGeminiが文字起こしして整え、みんなの発言の読み上げも選べるように' },
     { version: 'v1.7.2', date: '2026-10-13', note: 'イーグル隊長の音声の冒頭に「〜で読み上げてください」などの指示文が入る不具合を修正' },
@@ -33,6 +34,22 @@ window.APP_CONFIG = {
     { version: 'v1.2.0', date: '2026-10-13', note: 'Google Maps APIキーをスクリプトプロパティ管理に。スポットの「上空から見る／現地の景色」、広場の背景にストリートビューを追加' },
     { version: 'v1.1.0', date: '2026-10-13', note: '設定画面（GAS URLの設定・接続テスト）とバージョン情報画面を追加' },
     { version: 'v1.0.0', date: '2026-10-13', note: '初版公開（会員認証・行き先選定・フライト・現地広場・スポット管理）' }
+  ],
+
+  // ---- Gemini モデル ----
+  // 既定のモデル（画面で選ばなかった時に使う）。'' = 自動（汎用の最新）
+  GEMINI_MODEL: '',
+  GEMINI_MODEL_STORAGE_KEY: 'egf_gemini_model',
+  // 画面の「AIモデル」選択肢（value が API のモデルID）
+  // 指定モデルに該当がない（廃止・未公開・名前違い）場合は、GAS側で汎用の最新モデルへ自動で切り替わる
+  GEMINI_MODEL_OPTIONS: [
+    { value: '',                  label: '自動モード（汎用の最新）' },
+    { value: 'gemini-4-hydrogen', label: '4 Hydrogen（日々の暮らしをサポート）' },
+    { value: 'gemini-4-neon',     label: '4 Neon（Deeper analysis）' },
+    { value: 'gemini-4-carbon',   label: '4 Carbon（Code & complex work）' },
+    { value: 'gemini-4-argon',    label: '4 Argon' },
+    { value: 'gemini-3.8-flash',  label: '3.8 Flash' },
+    { value: 'gemini-3.5-flash',  label: '3.5 Flash' }
   ],
 
   // APIキーの参照先（表示・説明用。キー自体はGASのスクリプトプロパティで保持）

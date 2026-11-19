@@ -69,9 +69,10 @@
       const r = await fetch(gasUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action, token: S.token, ...data })
+        body: JSON.stringify({ action, token: S.token, model: currentModel(), ...data })
       });
       j = await r.json();
+      noteAiModel(j);
     } catch {
       throw new ApiError('サーバーに接続できません。通信状況を確認してください', 'network');
     }
@@ -2218,6 +2219,58 @@
 
   S.server = { state: 'checking' };
 
+  /* ---- Gemini モデル選択 ---- */
+  const MODEL_OPTIONS = Array.isArray(C.GEMINI_MODEL_OPTIONS) && C.GEMINI_MODEL_OPTIONS.length
+    ? C.GEMINI_MODEL_OPTIONS : [{ value: '', label: '自動モード（汎用の最新）' }];
+  const MODEL_KEY = C.GEMINI_MODEL_STORAGE_KEY || 'egf_gemini_model';
+
+  function currentModel() {
+    if (S.model === undefined) {
+      let saved = null;
+      try { saved = localStorage.getItem(MODEL_KEY); } catch { /* ignore */ }
+      S.model = saved !== null && MODEL_OPTIONS.some(o => o.value === saved) ? saved : (C.GEMINI_MODEL || '');
+    }
+    return S.model;
+  }
+  function modelLabel(v) {
+    const o = MODEL_OPTIONS.find(x => x.value === v);
+    return o ? o.label : (v || '自動モード（汎用の最新）');
+  }
+  // サーバーが実際に使ったモデルを記録。自動切替が起きたら1回だけお知らせ
+  function noteAiModel(j) {
+    if (!j || !j.aiModel) return;
+    S.lastAi = { model: j.aiModel, requested: j.aiRequested || '', fallback: !!j.aiFallback };
+    if (S.lastAi.fallback && S.fallbackNotified !== S.lastAi.requested) {
+      S.fallbackNotified = S.lastAi.requested;
+      toast(`${modelLabel(S.lastAi.requested)} が使えなかったため、${j.aiModel} に自動で切り替えました`);
+    }
+    paintModelMsg();
+  }
+  function paintModelMsg() {
+    const el = $('#modelMsg');
+    if (!el) return;
+    const a = S.lastAi;
+    if (!a) { el.textContent = '現在の選択：' + modelLabel(currentModel()); el.className = 'gas-test-msg'; return; }
+    el.textContent = a.fallback
+      ? `最後に使ったモデル：${a.model}（${a.requested} が使えなかったため自動で切替）`
+      : `最後に使ったモデル：${a.model}`;
+    el.className = 'gas-test-msg' + (a.fallback ? ' is-warn' : ' is-ok');
+  }
+  function initModelPicker() {
+    const sel = $('#modelSelect');
+    if (!sel) return;
+    sel.innerHTML = MODEL_OPTIONS.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+    sel.value = currentModel();
+    sel.addEventListener('change', () => {
+      S.model = sel.value;
+      S.lastAi = null;
+      try { localStorage.setItem(MODEL_KEY, S.model); } catch { /* ignore */ }
+      paintModelMsg();
+      toast('AIモデルを「' + modelLabel(S.model) + '」にしました');
+    });
+    paintModelMsg();
+  }
+
   async function renderVersion() {
     S.server = { state: 'checking' };
     paintVersionBar();
@@ -2257,6 +2310,9 @@
         <tr><th>サーバーのバージョン</th><td>${sv.state === 'ok' ? `${esc(sv.version || '不明')}（Build ${esc(sv.build || '不明')}）` : '—'}</td></tr>
         <tr><th>サーバー状態</th><td><span class="dot ${sv.state === 'ok' ? 'ok' : sv.state === 'checking' ? '' : 'ng'}"></span>${esc(state)}</td></tr>
         <tr><th>GAS URLの参照元</th><td>${esc(src)}</td></tr>
+        <tr><th>AIモデル（選択）</th><td>${esc(modelLabel(currentModel()))}</td></tr>
+        <tr><th>AIモデル（自動時の既定）</th><td>${sv.state === 'ok' && sv.defaultModel ? esc(sv.defaultModel) : '—'}</td></tr>
+        <tr><th>最後に使ったモデル</th><td>${S.lastAi ? esc(S.lastAi.model) + (S.lastAi.fallback ? '（自動切替）' : '') : '—'}</td></tr>
         <tr><th>Google Maps APIキー</th><td>${S.user ? (S.mapsKey ? '設定済み（スクリプトプロパティ）' : '未設定') : 'ログイン後に確認'}</td></tr>
         <tr><th>ログイン中</th><td>${S.user ? esc(S.user.nickname) + (S.user.role === 'admin' ? '（管理者）' : '') : '—'}</td></tr>
       </table>
@@ -2274,6 +2330,9 @@
     $('#gasTestMsg').className = 'gas-test-msg';
     $('#gasOverrideBox').hidden = !C.ALLOW_GAS_URL_OVERRIDE;
     switchSettingsTab(tab);
+    const sel = $('#modelSelect');
+    if (sel) sel.value = currentModel();
+    paintModelMsg();
     paintVersionInfo();
     openModal('#settingsModal');
     renderVersion();
@@ -2294,6 +2353,7 @@
     $('#versionBar').addEventListener('click', () => openSettings('version'));
     $$('[data-open-settings]').forEach(b => b.addEventListener('click', () => openSettings('gas')));
     $$('.settings-tab').forEach(b => b.addEventListener('click', () => switchSettingsTab(b.dataset.tab)));
+    initModelPicker();
 
     $('#btnGasTest').addEventListener('click', e => busyButton(e.currentTarget, async () => {
       const url = $('#gasUrlInput').value.trim();
